@@ -1,0 +1,10 @@
+pub(crate) mod jewelloc_generated;
+pub(crate) mod trbsm_generated;
+pub(crate) mod trltt_generated;
+pub(crate) mod trmbf_generated;
+pub(crate) mod trmdl_generated;
+pub(crate) mod trmmt_generated;
+pub(crate) mod trmsh_generated;
+pub(crate) mod trmtr_generated;
+pub(crate) mod trpokecfg_generated;
+pub(crate) mod trskl_generated;

@@ -23,10 +23,46 @@ use winit::{
 };
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
+use crate::io::model::RenderModel;
 
 use crate::rendering::renderer::{Recorder, Renderer};
 
 mod rendering;
+mod io;
+
+fn main() {
+    let model = RenderModel::from_trmdl(String::from("F:/PokemonModels/SV/pokemon/data/pm0197/pm0197_00_00/pm0197_00_00.trmdl"));
+
+    let event_loop = EventLoop::new();
+    let window = Arc::new(WindowBuilder::new()
+        .with_title("trinity-rs")
+        .build(&event_loop).unwrap());
+
+    let mut renderer = Renderer::new(window.clone(), &event_loop);
+    let triangle_renderer = TriangleRenderer::new(&mut renderer);
+    renderer.record(triangle_renderer);
+
+    event_loop.run(move |event, _, control_flow| {
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::WindowEvent {
+                event: WindowEvent::Resized(_),
+                ..
+            } => {
+                renderer.recreate_swapchain = true;
+            }
+            Event::RedrawEventsCleared => {
+                renderer.render();
+            }
+            _ => (),
+        }
+    });
+}
 
 #[derive(BufferContents, Vertex)]
 #[repr(C)]
@@ -169,36 +205,4 @@ impl Recorder for TriangleRenderer {
             .draw(self.vertex_buffer.len() as u32, 1, 0, 0).unwrap()
             .end_rendering().unwrap();
     }
-}
-
-fn main() {
-    let event_loop = EventLoop::new();
-    let window = Arc::new(WindowBuilder::new()
-        .with_title("trinity-rs")
-        .build(&event_loop).unwrap());
-
-    let mut renderer = Renderer::new(window.clone(), &event_loop);
-    let triangle_renderer = TriangleRenderer::new(&mut renderer);
-    renderer.record(triangle_renderer);
-
-    event_loop.run(move |event, _, control_flow| {
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                *control_flow = ControlFlow::Exit;
-            }
-            Event::WindowEvent {
-                event: WindowEvent::Resized(_),
-                ..
-            } => {
-                renderer.recreate_swapchain = true;
-            }
-            Event::RedrawEventsCleared => {
-                renderer.render();
-            }
-            _ => (),
-        }
-    });
 }
