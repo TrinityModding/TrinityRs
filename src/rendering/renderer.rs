@@ -1,54 +1,47 @@
 use std::sync::Arc;
 
-use vulkano::{buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage}, command_buffer::allocator::StandardCommandBufferAllocator, device::{
+use vulkano::{command_buffer::allocator::StandardCommandBufferAllocator, device::{
     Device, DeviceCreateInfo, DeviceExtensions, Features, physical::PhysicalDevice, physical::PhysicalDeviceType,
     QueueCreateInfo, QueueFlags,
-}, image::{Image, ImageUsage, view::ImageView}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo}, memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator}, pipeline::{
-    graphics::{
-        color_blend::ColorBlendState,
-        GraphicsPipelineCreateInfo,
-        input_assembly::InputAssemblyState,
-        multisample::MultisampleState,
-        rasterization::RasterizationState,
-        subpass::PipelineRenderingCreateInfo,
-        vertex_input::{Vertex, VertexDefinition},
-        viewport::{Viewport, ViewportState},
-    },
-    GraphicsPipeline,
-    layout::PipelineDescriptorSetLayoutCreateInfo, PipelineLayout, PipelineShaderStageCreateInfo,
-}, swapchain::{
+}, image::{Image, ImageUsage, view::ImageView}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo}, pipeline::graphics::viewport::Viewport, swapchain::{
     Surface, Swapchain, SwapchainCreateInfo,
 }, sync::{self, GpuFuture}, Validated, Version, VulkanError, VulkanLibrary};
-use vulkano::buffer::Subbuffer;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, RenderingAttachmentInfo, RenderingInfo};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use vulkano::device::Queue;
-use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::swapchain::{acquire_next_image, SwapchainPresentInfo};
 use winit::event_loop::EventLoop;
 use winit::window::Window;
 
-#[derive(BufferContents, Vertex)]
-#[repr(C)]
-pub struct OurVertex {
-    #[format(R32G32_SFLOAT)]
-    position: [f32; 2],
+pub trait Recorder {
+    fn record(
+        &self,
+        builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+        device: Arc<Device>,
+        swapchain: Arc<Swapchain>,
+        window_image_views: &Vec<Arc<ImageView>>,
+        viewport: Viewport,
+        image_index: usize
+    );
 }
 
 pub struct Renderer {
-    pub(crate) recreate_swapchain: bool,
-    pub attachment_image_views: Vec<Arc<ImageView>>,
+    pub command_buffer_recorders: Vec<Box<dyn Recorder>>,
+    pub recreate_swapchain: bool,
+    pub window_image_views: Vec<Arc<ImageView>>,
     pub previous_frame_end: Option<Box<dyn GpuFuture>>,
     pub command_buffer_allocator: StandardCommandBufferAllocator,
     pub swapchain: Arc<Swapchain>,
     pub window: Arc<Window>,
     pub queue: Arc<Queue>,
-    pub pipeline: Arc<GraphicsPipeline>,
-    pub vertex_buffer: Subbuffer<[OurVertex]>,
     pub device: Arc<Device>,
     pub viewport: Viewport,
 }
 
 impl Renderer {
+    pub fn record<P>(&mut self, predicate: P) where P: Recorder + 'static, {
+        self.command_buffer_recorders.push(Box::new(predicate));
+    }
+
     pub fn new(window: Arc<Window>, event_loop: &EventLoop<()>) -> Renderer {
         let library = VulkanLibrary::new().unwrap();
         let required_extensions = Surface::required_extensions(&event_loop);
@@ -137,7 +130,7 @@ impl Renderer {
 
         let queue = queues.next().unwrap();
 
-        let (mut swapchain, images) = {
+        let (swapchain, images) = {
             let surface_capabilities = device
                 .physical_device()
                 .surface_capabilities(&surface, Default::default())
@@ -170,114 +163,6 @@ impl Renderer {
                 .unwrap()
         };
 
-        let memory_allocator = Arc::new(StandardMemoryAllocator::new_default(device.clone()));
-
-        let vertices = [
-            OurVertex {
-                position: [-0.5, -0.25],
-            },
-            OurVertex {
-                position: [0.0, 0.5],
-            },
-            OurVertex {
-                position: [0.25, -0.1],
-            },
-        ];
-        let vertex_buffer = Buffer::from_iter(
-            memory_allocator,
-            BufferCreateInfo {
-                usage: BufferUsage::VERTEX_BUFFER,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            vertices,
-        )
-            .unwrap();
-
-        mod vs {
-            vulkano_shaders::shader! {
-            ty: "vertex",
-            src: r"
-                #version 450
-
-                layout(location = 0) in vec2 position;
-
-                void main() {
-                    gl_Position = vec4(position, 0.0, 1.0);
-                }
-            ",
-        }
-        }
-
-        mod fs {
-            vulkano_shaders::shader! {
-            ty: "fragment",
-            src: r"
-                #version 450
-
-                layout(location = 0) out vec4 f_color;
-
-                void main() {
-                    f_color = vec4(1.0, 0.0, 0.0, 1.0);
-                }
-            ",
-        }
-        }
-
-        let pipeline = {
-            let vs = vs::load(device.clone())
-                .unwrap()
-                .entry_point("main")
-                .unwrap();
-            let fs = fs::load(device.clone())
-                .unwrap()
-                .entry_point("main")
-                .unwrap();
-
-            let vertex_input_state = OurVertex::per_vertex()
-                .definition(&vs.info().input_interface)
-                .unwrap();
-
-            let stages = [
-                PipelineShaderStageCreateInfo::new(vs),
-                PipelineShaderStageCreateInfo::new(fs),
-            ];
-
-            let layout = PipelineLayout::new(
-                device.clone(),
-                PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
-                    .into_pipeline_layout_create_info(device.clone())
-                    .unwrap(),
-            ).unwrap();
-
-            let subpass = PipelineRenderingCreateInfo {
-                color_attachment_formats: vec![Some(swapchain.image_format())],
-                ..Default::default()
-            };
-
-            GraphicsPipeline::new(
-                device.clone(),
-                None,
-                GraphicsPipelineCreateInfo {
-                    stages: stages.into_iter().collect(),
-                    vertex_input_state: Some(vertex_input_state),
-                    input_assembly_state: Some(InputAssemblyState::default()),
-                    viewport_state: Some(ViewportState::viewport_dynamic_scissor_irrelevant()),
-                    rasterization_state: Some(RasterizationState::default()),
-                    multisample_state: Some(MultisampleState::default()),
-                    color_blend_state: Some(ColorBlendState::new(
-                        subpass.color_attachment_formats.len() as u32,
-                    )),
-                    subpass: Some(subpass.into()),
-                    ..GraphicsPipelineCreateInfo::layout(layout)
-                },
-            ).unwrap()
-        };
-
         let mut viewport = Viewport {
             offset: [0.0, 0.0],
             extent: [0.0, 0.0],
@@ -285,18 +170,16 @@ impl Renderer {
         };
 
         Renderer {
+            command_buffer_recorders: vec!(),
             swapchain,
             window,
             queue,
-            // TODO: remove these part specific ones
-            pipeline,
-            vertex_buffer,
             recreate_swapchain: false,
-            attachment_image_views: update_viewport(&images, &mut viewport),
+            window_image_views: update_viewport(&images, &mut viewport),
             previous_frame_end: Some(sync::now(device.clone()).boxed()),
             command_buffer_allocator: StandardCommandBufferAllocator::new(device.clone(), Default::default()),
             device,
-            viewport
+            viewport,
         }
     }
 
@@ -318,7 +201,7 @@ impl Renderer {
                 .expect("failed to recreate swapchain");
 
             self.swapchain = new_swapchain;
-            self.attachment_image_views = update_viewport(&new_images, &mut self.viewport);
+            self.window_image_views = update_viewport(&new_images, &mut self.viewport);
             self.recreate_swapchain = false;
         }
 
@@ -340,26 +223,11 @@ impl Renderer {
             &self.command_buffer_allocator,
             self.queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
-        )
-            .unwrap();
+        ).unwrap();
 
-        builder
-            .begin_rendering(RenderingInfo {
-                color_attachments: vec![Some(RenderingAttachmentInfo {
-                    load_op: AttachmentLoadOp::Clear,
-                    store_op: AttachmentStoreOp::Store,
-                    clear_value: Some([0.0, 0.0, 1.0, 1.0].into()),
-                    ..RenderingAttachmentInfo::image_view(
-                        self.attachment_image_views[image_index as usize].clone(),
-                    )
-                })],
-                ..Default::default()
-            }).unwrap()
-            .set_viewport(0, [self.viewport.clone()].into_iter().collect()).unwrap()
-            .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
-            .bind_vertex_buffers(0, self.vertex_buffer.clone()).unwrap()
-            .draw(self.vertex_buffer.len() as u32, 1, 0, 0).unwrap()
-            .end_rendering().unwrap();
+        for x in &self.command_buffer_recorders {
+            x.record(&mut builder, self.device.clone(), self.swapchain.clone(), &self.window_image_views, self.viewport.clone(), image_index as usize);
+        }
 
         // Finish building the command buffer by calling `build`.
         let command_buffer = builder.build().unwrap();

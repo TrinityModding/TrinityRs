@@ -3,17 +3,6 @@
 version = 3
 
 [[package]]
-name = "TrinityReimpl"
-version = "0.1.0"
-dependencies = [
- "vulkano",
- "vulkano-shaders",
- "vulkano-util",
- "vulkano-win",
- "winit",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1048,6 +1037,17 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "winnow",
+]
+
+[[package]]
+name = "trinity-rs"
+version = "0.1.0"
+dependencies = [
+ "vulkano",
+ "vulkano-shaders",
+ "vulkano-util",
+ "vulkano-win",
+ "winit",
 ]
 
 [[package]]
