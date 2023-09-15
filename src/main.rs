@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo};
+use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, DrawIndirectCommand, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo};
 use vulkano::device::Device;
 use vulkano::image::view::ImageView;
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
@@ -75,6 +76,7 @@ pub struct Vertex2D {
 struct TriangleRenderer {
     vertex_buffer: Subbuffer<[Vertex2D]>,
     pipeline: Arc<GraphicsPipeline>,
+    indirect_buffer: Subbuffer<[DrawIndirectCommand]>,
 }
 
 impl TriangleRenderer {
@@ -93,7 +95,7 @@ impl TriangleRenderer {
             },
         ];
         let vertex_buffer = Buffer::from_iter(
-            memory_allocator,
+            memory_allocator.clone(),
             BufferCreateInfo {
                 usage: BufferUsage::VERTEX_BUFFER,
                 ..Default::default()
@@ -170,7 +172,41 @@ impl TriangleRenderer {
             ).unwrap()
         };
 
+        let indirect_args_pool = SubbufferAllocator::new(
+            memory_allocator,
+            SubbufferAllocatorCreateInfo {
+                buffer_usage: BufferUsage::INDIRECT_BUFFER | BufferUsage::STORAGE_BUFFER,
+                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+        );
+
+        let indirect_commands = [DrawIndirectCommand {
+            vertex_count: vertex_buffer.len() as u32,
+            instance_count: 1,
+            first_vertex: 0,
+            first_instance: 0,
+        }];
+
+        let indirect_buffer = indirect_args_pool
+            .allocate_slice(indirect_commands.len() as _)
+            .unwrap();
+        indirect_buffer
+            .write()
+            .unwrap()
+            .copy_from_slice(&indirect_commands);
+
+        let indirect_buffer = indirect_args_pool
+            .allocate_slice(indirect_commands.len() as _)
+            .unwrap();
+        indirect_buffer
+            .write()
+            .unwrap()
+            .copy_from_slice(&indirect_commands);
+
         TriangleRenderer {
+            indirect_buffer,
             vertex_buffer,
             pipeline,
         }
@@ -202,7 +238,7 @@ impl Recorder for TriangleRenderer {
             .set_viewport(0, [viewport].into_iter().collect()).unwrap()
             .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
             .bind_vertex_buffers(0, self.vertex_buffer.clone()).unwrap()
-            .draw(self.vertex_buffer.len() as u32, 1, 0, 0).unwrap()
+            .draw_indirect(self.indirect_buffer.to_owned()).unwrap()
             .end_rendering().unwrap();
     }
 }

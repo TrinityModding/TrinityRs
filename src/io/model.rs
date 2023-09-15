@@ -19,6 +19,7 @@ impl RenderModel {
         let material = root_as_trmtr(trmtr_bytes.as_slice());
         path.pop();
 
+        println!("{}", trmdl.materials().unwrap().get(0));
         RenderModel {}
     }
 }
