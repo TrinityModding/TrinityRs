@@ -8,6 +8,7 @@ use vulkano::{command_buffer::allocator::StandardCommandBufferAllocator, device:
 }, sync::{self, GpuFuture}, Validated, Version, VulkanError, VulkanLibrary};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use vulkano::device::Queue;
+use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::swapchain::{acquire_next_image, SwapchainPresentInfo};
 use winit::event_loop::EventLoop;
 use winit::window::Window;
@@ -35,6 +36,7 @@ pub struct Renderer {
     pub queue: Arc<Queue>,
     pub device: Arc<Device>,
     pub viewport: Viewport,
+    pub allocator: Arc<StandardMemoryAllocator>
 }
 
 impl Renderer {
@@ -120,6 +122,7 @@ impl Renderer {
 
                 enabled_features: Features {
                     dynamic_rendering: true,
+                    multi_draw_indirect: true,
                     ..Features::empty()
                 },
 
@@ -178,8 +181,9 @@ impl Renderer {
             window_image_views: update_viewport(&images, &mut viewport),
             previous_frame_end: Some(sync::now(device.clone()).boxed()),
             command_buffer_allocator: StandardCommandBufferAllocator::new(device.clone(), Default::default()),
-            device,
+            device: device.clone(),
             viewport,
+            allocator: Arc::new(StandardMemoryAllocator::new_default(device.clone()))
         }
     }
 

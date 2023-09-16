@@ -1,6 +1,12 @@
 #version 450
 
-layout(location = 0) in vec2 position;
+layout(location = 0) in vec3 position;
+layout(location = 1) in vec3 normal;
+layout(location = 2) in vec4 tangent;
+layout(location = 3) in vec2 uv;
+layout(location = 4) in uint[] blendIndices;
+layout(location = 5) in vec4 blendWeights;
+
 layout(location = 0) out vec3 outColor;
 
 void main() {
@@ -10,6 +16,6 @@ void main() {
         vec3(00.f, 0.0f, 1.0f)  //blue
     );
 
-    gl_Position = vec4(position, 0.0, 1.0);
-    outColor = colors[gl_VertexIndex];
+    gl_Position = vec4(position, 1.0);
+    outColor = colors[gl_VertexIndex % 3];
 }

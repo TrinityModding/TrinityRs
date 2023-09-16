@@ -8,6 +8,7 @@ edition = "2021"
 flatbuffers = "23.5.26"
 
 # rendering
+bytemuck = "1.14.0"
 glam = "0.24.1"
 vulkano = {git = "https://github.com/vulkano-rs/vulkano.git"}
 vulkano-util = {git = "https://github.com/vulkano-rs/vulkano.git"}
