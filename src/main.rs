@@ -1,8 +1,5 @@
-use std::mem::transmute;
-use std::ptr::null;
 use std::sync::Arc;
 
-use bytemuck::cast;
 use vulkano::buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DrawIndexedIndirectCommand, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo};
@@ -10,9 +7,8 @@ use vulkano::device::Device;
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::memory::allocator::MemoryTypeFilter;
-use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::pipeline::graphics::color_blend::ColorBlendState;
-use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::multisample::MultisampleState;
@@ -36,13 +32,27 @@ use crate::rendering::renderer::{Recorder, Renderer};
 mod rendering;
 mod io;
 
+mod vs {
+    vulkano_shaders::shader! {
+            ty: "vertex",
+            path: "shaders/vertex.glsl"
+            }
+}
+
+mod fs {
+    vulkano_shaders::shader! {
+            ty: "fragment",
+            path: "shaders/fragment.glsl"
+            }
+}
+
 fn main() {
     let event_loop = EventLoop::new();
     let window = Arc::new(WindowBuilder::new()
         .with_title("trinity-rs")
         .build(&event_loop).unwrap());
 
-    let mut renderer = Renderer::new(window.clone(), &event_loop);
+    let mut renderer = Renderer::new(window.clone(), &event_loop, true);
     let model = RenderModel::from_trmdl(String::from("F:/PokemonModels/SV/pokemon/data/pm0197/pm0197_00_00/pm0197_00_00.trmdl"), renderer.allocator.clone());
 
     let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0); // load the non-lod mesh
@@ -72,6 +82,7 @@ fn main() {
 
 #[derive(Clone)]
 struct ModelRenderGraph {
+    push_constants: vs::PushConstantData,
     pipeline: Arc<GraphicsPipeline>,
     indirect_buffer: Subbuffer<[DrawIndexedIndirectCommand]>,
     target_mesh: RenderModel,
@@ -79,20 +90,6 @@ struct ModelRenderGraph {
 
 impl ModelRenderGraph {
     pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize) -> ModelRenderGraph {
-        mod vs {
-            vulkano_shaders::shader! {
-            ty: "vertex",
-            path: "shaders/vertex.glsl"
-            }
-        }
-
-        mod fs {
-            vulkano_shaders::shader! {
-            ty: "fragment",
-            path: "shaders/fragment.glsl"
-            }
-        }
-
         let pipeline = {
             let vs = vs::load(renderer.device.clone())
                 .unwrap()
@@ -122,7 +119,7 @@ impl ModelRenderGraph {
 
             let mut vertex_attributes = Vec::new();
             let mut vertex_bindings = Vec::new();
-            let mut size = 0;
+            let mut offset = 0;
             for attr_idx in 0..model.attributes.len() {
                 let attribute = model.attributes.get(attr_idx).unwrap();
 
@@ -139,18 +136,7 @@ impl ModelRenderGraph {
                     AttributeSize::Rgba32Float(_, _) => Format::R32G32B32A32_SFLOAT,
                 };
 
-                vertex_attributes.push((attr_idx as u32, VertexInputAttributeDescription {
-                    binding: 0,
-                    format: vk_type,
-                    offset: size,
-                }));
-
-                vertex_bindings.push((0, VertexInputBindingDescription {
-                    stride: size,
-                    input_rate: VertexInputRate::Vertex,
-                }));
-
-                size += match attribute.size {
+                let size = match attribute.size {
                     AttributeSize::None(_, s) => s as u32,
                     AttributeSize::Rgba8UNorm(_, s) => s as u32,
                     AttributeSize::Rgba8Unsigned(_, s) => s as u32,
@@ -162,6 +148,19 @@ impl ModelRenderGraph {
                     AttributeSize::Rgb32Float(_, s) => s as u32,
                     AttributeSize::Rgba32Float(_, s) => s as u32,
                 };
+
+                vertex_attributes.push((attr_idx as u32, VertexInputAttributeDescription {
+                    binding: 0,
+                    format: vk_type,
+                    offset,
+                }));
+
+                vertex_bindings.push((0, VertexInputBindingDescription {
+                    stride: size,
+                    input_rate: VertexInputRate::Vertex,
+                }));
+
+                offset += size;
             }
 
             println!("Vertex Layout for model: {:?}", model.attributes);
@@ -208,7 +207,16 @@ impl ModelRenderGraph {
             .write().unwrap()
             .copy_from_slice(target_mesh.draw_calls.as_slice());
 
+        let proj_matrix = ultraviolet::projection::lh_ydown::perspective_vk(90f32, 1.7, 0.1, 1000.0);
+        let view_matrix = ultraviolet::mat::Mat4::identity();
+
+        let push_constants = vs::PushConstantData {
+            projMat: proj_matrix.into(),
+            viewMat: view_matrix.into(),
+        };
+
         ModelRenderGraph {
+            push_constants,
             target_mesh,
             pipeline,
             indirect_buffer,
@@ -248,21 +256,20 @@ impl Recorder for ModelRenderGraph {
             }).unwrap()
             .set_viewport(0, [viewport].into_iter().collect()).unwrap();
 
-        unsafe {
-            let src = self.target_mesh.index_buffer.clone();
-            let index_buffer = match self.target_mesh.idx_layout {
-                IndexLayout::UInt8(_) => IndexBuffer::U8(transmute(src)),
-                IndexLayout::UInt16(_) => IndexBuffer::U16(transmute(src)),
-                IndexLayout::UInt32(_) => IndexBuffer::U32(transmute(src)),
-                IndexLayout::UInt64(_) => panic!("64 bit index buffers not supported"),
-            };
+        builder
+            .push_constants(self.pipeline.layout().clone(), 0, self.push_constants).unwrap()
+            .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
+            .bind_vertex_buffers(0, self.target_mesh.vertex_buffer.clone()).unwrap();
 
-            builder
-                .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
-                .bind_vertex_buffers(0, self.target_mesh.vertex_buffer.clone()).unwrap()
-                .bind_index_buffer(index_buffer).unwrap()
-                .draw_indexed_indirect(self.indirect_buffer.to_owned()).unwrap();
-        }
+        let src = self.target_mesh.index_buffer.clone();
+        match self.target_mesh.idx_layout {
+            IndexLayout::UInt8(_) => builder.bind_index_buffer(src).unwrap(),
+            IndexLayout::UInt16(_) => builder.bind_index_buffer(IndexBuffer::U16(Subbuffer::reinterpret::<[u16]>(src))).unwrap(),
+            IndexLayout::UInt32(_) => builder.bind_index_buffer(IndexBuffer::U32(Subbuffer::reinterpret::<[u32]>(src))).unwrap(),
+            IndexLayout::UInt64(_) => panic!("64 bit index buffers not supported"),
+        };
+
+        builder.draw_indexed_indirect(self.indirect_buffer.to_owned()).unwrap();
 
         builder.end_rendering().unwrap();
     }

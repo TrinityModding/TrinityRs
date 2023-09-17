@@ -8,6 +8,7 @@ use vulkano::{command_buffer::allocator::StandardCommandBufferAllocator, device:
 }, sync::{self, GpuFuture}, Validated, Version, VulkanError, VulkanLibrary};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use vulkano::device::Queue;
+use vulkano::instance::debug::ValidationFeatureEnable;
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::swapchain::{acquire_next_image, SwapchainPresentInfo};
 use winit::event_loop::EventLoop;
@@ -44,15 +45,21 @@ impl Renderer {
         self.command_buffer_recorders.push(Box::new(predicate));
     }
 
-    pub fn new(window: Arc<Window>, event_loop: &EventLoop<()>) -> Renderer {
+    pub fn new(window: Arc<Window>, event_loop: &EventLoop<()>, enable_renderdoc: bool) -> Renderer {
         let library = VulkanLibrary::new().unwrap();
         let required_extensions = Surface::required_extensions(&event_loop);
+        let mut enabled_layers = Vec::new();
+        if enable_renderdoc {
+            enabled_layers.push(String::from("VK_LAYER_RENDERDOC_Capture"));
+        }
+        enabled_layers.push(String::from("VK_LAYER_KHRONOS_validation"));
 
         let instance = Instance::new(
             library,
             InstanceCreateInfo {
                 flags: InstanceCreateFlags::ENUMERATE_PORTABILITY, // Include MoltenVK in search
                 enabled_extensions: required_extensions,
+                enabled_layers,
                 ..Default::default()
             },
         ).unwrap();
@@ -78,9 +85,6 @@ impl Renderer {
                     .iter()
                     .enumerate()
                     .position(|(i, q)| {
-                        // We select a queue family that supports graphics operations. When drawing to
-                        // a window surface, as we do in this example, we also need to check that
-                        // queues in this queue family are capable of presenting images to the surface.
                         q.queue_flags.intersects(QueueFlags::GRAPHICS)
                             && p.surface_support(i as u32, &surface).unwrap_or(false)
                     })

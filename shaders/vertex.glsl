@@ -9,6 +9,11 @@ layout(location = 5) in vec4 blendWeights;
 
 layout(location = 0) out vec3 outColor;
 
+layout(push_constant) uniform PushConstantData {
+    mat4 projMat;
+    mat4 viewMat;
+} constants;
+
 void main() {
     const vec3 colors[3] = vec3[3](
         vec3(1.0f, 0.0f, 0.0f), //red
@@ -16,6 +21,6 @@ void main() {
         vec3(00.f, 0.0f, 1.0f)  //blue
     );
 
-    gl_Position = vec4(position, 1.0);
+    gl_Position = constants.projMat * constants.viewMat * vec4(position, 1.0);
     outColor = colors[gl_VertexIndex % 3];
 }

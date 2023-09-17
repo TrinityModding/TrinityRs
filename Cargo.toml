@@ -8,10 +8,9 @@ edition = "2021"
 flatbuffers = "23.5.26"
 
 # rendering
-bytemuck = "1.14.0"
-glam = "0.24.1"
-vulkano = {git = "https://github.com/vulkano-rs/vulkano.git"}
-vulkano-util = {git = "https://github.com/vulkano-rs/vulkano.git"}
-vulkano-shaders = {git = "https://github.com/vulkano-rs/vulkano.git"}
-vulkano-win = {git = "https://github.com/vulkano-rs/vulkano.git"}
+ultraviolet = { version = "0.9.2", features = ["bytemuck"] }
+vulkano = { git = "https://github.com/vulkano-rs/vulkano.git" }
+vulkano-util = { git = "https://github.com/vulkano-rs/vulkano.git" }
+vulkano-shaders = { git = "https://github.com/vulkano-rs/vulkano.git" }
+vulkano-win = { git = "https://github.com/vulkano-rs/vulkano.git" }
 winit = "0.28.3"
