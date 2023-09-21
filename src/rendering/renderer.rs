@@ -8,7 +8,6 @@ use vulkano::{command_buffer::allocator::StandardCommandBufferAllocator, device:
 }, sync::{self, GpuFuture}, Validated, Version, VulkanError, VulkanLibrary};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use vulkano::device::Queue;
-use vulkano::instance::debug::ValidationFeatureEnable;
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::swapchain::{acquire_next_image, SwapchainPresentInfo};
 use winit::event_loop::EventLoop;
@@ -45,13 +44,10 @@ impl Renderer {
         self.command_buffer_recorders.push(Box::new(predicate));
     }
 
-    pub fn new(window: Arc<Window>, event_loop: &EventLoop<()>, enable_renderdoc: bool) -> Renderer {
+    pub fn new(window: Arc<Window>, event_loop: &EventLoop<()>) -> Renderer {
         let library = VulkanLibrary::new().unwrap();
         let required_extensions = Surface::required_extensions(&event_loop);
         let mut enabled_layers = Vec::new();
-        if enable_renderdoc {
-            enabled_layers.push(String::from("VK_LAYER_RENDERDOC_Capture"));
-        }
         enabled_layers.push(String::from("VK_LAYER_KHRONOS_validation"));
 
         let instance = Instance::new(

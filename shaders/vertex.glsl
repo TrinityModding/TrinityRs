@@ -1,7 +1,7 @@
 #version 450
 
 layout(location = 0) in vec3 position;
-layout(location = 1) in vec3 normal;
+layout(location = 1) in vec4 normal;
 layout(location = 2) in vec4 tangent;
 layout(location = 3) in vec2 uv;
 layout(location = 4) in uint[] blendIndices;
@@ -12,6 +12,7 @@ layout(location = 0) out vec3 outColor;
 layout(push_constant) uniform PushConstantData {
     mat4 projMat;
     mat4 viewMat;
+    mat4 modelTransform;
 } constants;
 
 void main() {
@@ -21,6 +22,7 @@ void main() {
         vec3(00.f, 0.0f, 1.0f)  //blue
     );
 
-    gl_Position = constants.projMat * constants.viewMat * vec4(position, 1.0);
+    mat4 worldSpace = constants.projMat * constants.viewMat;
+    gl_Position = worldSpace * constants.modelTransform * vec4(position, 1.0);
     outColor = colors[gl_VertexIndex % 3];
 }

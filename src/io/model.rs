@@ -39,7 +39,7 @@ impl RenderModel {
 
         path.push(trmdl.materials().unwrap().get(0));
         let trmtr_bytes = fs::read(path.to_str().unwrap()).unwrap();
-        let material = root_as_trmtr(trmtr_bytes.as_slice());
+        let _material = root_as_trmtr(trmtr_bytes.as_slice());
         path.pop();
 
         let mesh_map = trmdl.meshes().unwrap().iter().map(|x| {
@@ -142,15 +142,6 @@ pub enum IndexLayout {
 }
 
 impl IndexLayout {
-    fn size(&self) -> u32 {
-        match self {
-            IndexLayout::UInt8(size) => *size,
-            IndexLayout::UInt16(size) => *size,
-            IndexLayout::UInt32(size) => *size,
-            IndexLayout::UInt64(size) => *size,
-        }
-    }
-
     fn get(i: PolygonType) -> Option<IndexLayout> {
         match i.0 {
             0 => Some(IndexLayout::UInt8(size_of::<u8>() as u32)),
@@ -228,4 +219,21 @@ impl AttributeSize {
 pub struct Attribute {
     pub type_: AttributeType,
     pub size: AttributeSize,
+}
+
+impl Attribute {
+    pub fn get_size(&self) -> u32 {
+        match self.size {
+            AttributeSize::None(_, s) => s as u32,
+            AttributeSize::Rgba8UNorm(_, s) => s as u32,
+            AttributeSize::Rgba8Unsigned(_, s) => s as u32,
+            AttributeSize::R32UInt(_, s) => s as u32,
+            AttributeSize::R32Int(_, s) => s as u32,
+            AttributeSize::Rgba16UNorm(_, s) => s as u32,
+            AttributeSize::Rgba16Float(_, s) => s as u32,
+            AttributeSize::Rg32Float(_, s) => s as u32,
+            AttributeSize::Rgb32Float(_, s) => s as u32,
+            AttributeSize::Rgba32Float(_, s) => s as u32,
+        }
+    }
 }

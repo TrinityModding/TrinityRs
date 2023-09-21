@@ -1,6 +1,7 @@
 use std::sync::Arc;
+use ultraviolet::{Mat4, Vec3};
 
-use vulkano::buffer::{BufferContents, BufferUsage, IndexBuffer, Subbuffer};
+use vulkano::buffer::{BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DrawIndexedIndirectCommand, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo};
 use vulkano::device::Device;
@@ -12,9 +13,9 @@ use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::multisample::MultisampleState;
-use vulkano::pipeline::graphics::rasterization::RasterizationState;
+use vulkano::pipeline::graphics::rasterization::{FrontFace, RasterizationState};
 use vulkano::pipeline::graphics::subpass::PipelineRenderingCreateInfo;
-use vulkano::pipeline::graphics::vertex_input::{Vertex, VertexDefinition, VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState};
+use vulkano::pipeline::graphics::vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState};
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
@@ -26,7 +27,7 @@ use winit::{
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 
-use crate::io::model::{AttributeSize, IndexLayout, RenderModel, RootModel};
+use crate::io::model::{Attribute, AttributeSize, IndexLayout, RenderModel, RootModel};
 use crate::rendering::renderer::{Recorder, Renderer};
 
 mod rendering;
@@ -46,14 +47,39 @@ mod fs {
             }
 }
 
+#[derive(Clone, Debug)]
+struct Camera {
+    translation: Vec3,
+    rotation: Vec3,
+    cached_transform: Mat4,
+}
+
+impl Camera {
+    pub fn new() -> Camera {
+        Camera {
+            translation: Vec3::new(0.0, 0.0, 0.0),
+            rotation: Vec3::new(0.0, 0.0, 0.0),
+            cached_transform: Mat4::identity().inversed()
+        }
+    }
+
+    pub fn update(&mut self) {
+
+    }
+
+    pub fn get_matrix(&self) -> Mat4 {
+        self.cached_transform.clone()
+    }
+}
+
 fn main() {
     let event_loop = EventLoop::new();
     let window = Arc::new(WindowBuilder::new()
         .with_title("trinity-rs")
         .build(&event_loop).unwrap());
 
-    let mut renderer = Renderer::new(window.clone(), &event_loop, true);
-    let model = RenderModel::from_trmdl(String::from("F:/PokemonModels/SV/pokemon/data/pm0197/pm0197_00_00/pm0197_00_00.trmdl"), renderer.allocator.clone());
+    let mut renderer = Renderer::new(window.clone(), &event_loop);
+    let model = RenderModel::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00.trmdl"), renderer.allocator.clone());
 
     let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0); // load the non-lod mesh
     renderer.record(triangle_renderer);
@@ -119,10 +145,10 @@ impl ModelRenderGraph {
 
             let mut vertex_attributes = Vec::new();
             let mut vertex_bindings = Vec::new();
+            let total_size = calculate_element_size(&model.attributes);
             let mut offset = 0;
             for attr_idx in 0..model.attributes.len() {
                 let attribute = model.attributes.get(attr_idx).unwrap();
-
                 let vk_type = match attribute.size {
                     AttributeSize::None(_, _) => panic!("impossible"),
                     AttributeSize::Rgba8UNorm(_, _) => Format::R8G8B8A8_UNORM,
@@ -135,19 +161,7 @@ impl ModelRenderGraph {
                     AttributeSize::Rgb32Float(_, _) => Format::R32G32B32_SFLOAT,
                     AttributeSize::Rgba32Float(_, _) => Format::R32G32B32A32_SFLOAT,
                 };
-
-                let size = match attribute.size {
-                    AttributeSize::None(_, s) => s as u32,
-                    AttributeSize::Rgba8UNorm(_, s) => s as u32,
-                    AttributeSize::Rgba8Unsigned(_, s) => s as u32,
-                    AttributeSize::R32UInt(_, s) => s as u32,
-                    AttributeSize::R32Int(_, s) => s as u32,
-                    AttributeSize::Rgba16UNorm(_, s) => s as u32,
-                    AttributeSize::Rgba16Float(_, s) => s as u32,
-                    AttributeSize::Rg32Float(_, s) => s as u32,
-                    AttributeSize::Rgb32Float(_, s) => s as u32,
-                    AttributeSize::Rgba32Float(_, s) => s as u32,
-                };
+                let size = attribute.get_size();
 
                 vertex_attributes.push((attr_idx as u32, VertexInputAttributeDescription {
                     binding: 0,
@@ -156,7 +170,7 @@ impl ModelRenderGraph {
                 }));
 
                 vertex_bindings.push((0, VertexInputBindingDescription {
-                    stride: size,
+                    stride: total_size,
                     input_rate: VertexInputRate::Vertex,
                 }));
 
@@ -177,7 +191,8 @@ impl ModelRenderGraph {
                     vertex_input_state: Some(vertex_layout),
                     input_assembly_state: Some(InputAssemblyState::default()),
                     viewport_state: Some(ViewportState::viewport_dynamic_scissor_irrelevant()),
-                    rasterization_state: Some(RasterizationState::default()),
+                    rasterization_state: Some(RasterizationState::default()
+                        .front_face(FrontFace::Clockwise)),
                     multisample_state: Some(MultisampleState::default()),
                     color_blend_state: Some(ColorBlendState::new(
                         subpass.color_attachment_formats.len() as u32,
@@ -207,12 +222,16 @@ impl ModelRenderGraph {
             .write().unwrap()
             .copy_from_slice(target_mesh.draw_calls.as_slice());
 
-        let proj_matrix = ultraviolet::projection::lh_ydown::perspective_vk(90f32, 1.7, 0.1, 1000.0);
-        let view_matrix = ultraviolet::mat::Mat4::identity();
+        let proj_matrix = ultraviolet::projection::lh_ydown::perspective_reversed_z_vk(90f32, renderer.viewport.extent[0] / renderer.viewport.extent[1], 0.1, 1000.0);
+        let camera = Camera::new();
+        let mut model_transform = Mat4::identity();
+        let vec = Vec3::new(0.0, 0.0, -10.0);
+        model_transform.translate(&vec);
 
         let push_constants = vs::PushConstantData {
             projMat: proj_matrix.into(),
-            viewMat: view_matrix.into(),
+            viewMat: camera.get_matrix().into(),
+            modelTransform: model_transform.into(),
         };
 
         ModelRenderGraph {
@@ -222,6 +241,14 @@ impl ModelRenderGraph {
             indirect_buffer,
         }
     }
+}
+
+fn calculate_element_size(attribs: &Vec<Attribute>) -> u32 {
+    let mut total_size = 0;
+    for attrib in attribs {
+        total_size += attrib.get_size();
+    }
+    total_size
 }
 
 impl Recorder for ModelRenderGraph {
