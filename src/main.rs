@@ -1,6 +1,6 @@
 use std::ops::Add;
 use std::sync::{Arc, Mutex};
-use ultraviolet::{Mat4, Vec3};
+use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3};
 
 use vulkano::buffer::{BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
@@ -54,7 +54,7 @@ mod fs {
 #[derive(Clone, Debug)]
 struct Camera {
     translation: Vec3,
-    rotation: Vec3,
+    rotation: Rotor3,
     cached_transform: Mat4,
 }
 
@@ -62,13 +62,16 @@ impl Camera {
     pub fn new() -> Camera {
         Camera {
             translation: Vec3::new(0.0, 0.0, 0.0),
-            rotation: Vec3::new(0.0, 0.0, 0.0),
-            cached_transform: Mat4::identity().inversed(),
+            rotation: Rotor3::from_euler_angles(0.0, 0.0, 0.0),
+            cached_transform: Mat4::identity(),
         }
     }
 
     pub fn update(&mut self) {
-        self.cached_transform = Mat4::identity().translated(&self.translation);
+        let mut transform = Similarity3::identity();
+        transform.append_translation(self.translation);
+        transform.append_rotation(self.rotation);
+        self.cached_transform = transform.into_homogeneous_matrix();
     }
 
     pub fn translate(&mut self, x: f32, y: f32, z: f32) {
@@ -253,7 +256,7 @@ struct ModelRenderGraph {
     pipeline: Arc<GraphicsPipeline>,
     indirect_buffer: Subbuffer<[DrawIndexedIndirectCommand]>,
     target_mesh: RenderModel,
-    model_transform: Mat4,
+    model_transform: Similarity3,
 }
 
 impl ModelRenderGraph {
@@ -369,7 +372,7 @@ impl ModelRenderGraph {
             target_mesh,
             pipeline,
             indirect_buffer,
-            model_transform: Mat4::identity(),
+            model_transform: Similarity3::identity(),
         }
     }
 }
@@ -411,11 +414,12 @@ impl Recorder for ModelRenderGraph {
             .set_viewport(0, [viewport.clone()].into_iter().collect()).unwrap();
 
         let proj_matrix = ultraviolet::projection::rh_ydown::perspective_vk(90f32, viewport.extent[0] / viewport.extent[1], 0.1, 1000.0);
+        let model_matrix: Mat4 = self.model_transform.into_homogeneous_matrix();
 
         let push_constants = vs::PushConstantData {
             projMat: proj_matrix.into(),
             viewMat: self.camera.lock().unwrap().get_matrix().into(),
-            modelTransform: self.model_transform.into(),
+            modelTransform: model_matrix.into(),
         };
 
         builder
