@@ -7,10 +7,12 @@ use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInf
 use vulkano::command_buffer::{AutoCommandBufferBuilder, DrawIndexedIndirectCommand, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo};
 use vulkano::device::Device;
 use vulkano::format::Format;
+use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::image::view::ImageView;
-use vulkano::memory::allocator::MemoryTypeFilter;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, MemoryTypeFilter};
 use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::pipeline::graphics::color_blend::ColorBlendState;
+use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::multisample::MultisampleState;
@@ -20,7 +22,7 @@ use vulkano::pipeline::graphics::vertex_input::{VertexInputAttributeDescription,
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
-use vulkano::swapchain::Swapchain;
+use vulkano::swapchain::{Swapchain, SwapchainCreateInfo};
 use winit::{
     event_loop::EventLoop,
     window::WindowBuilder,
@@ -61,7 +63,7 @@ impl Camera {
         Camera {
             translation: Vec3::new(0.0, 0.0, 0.0),
             rotation: Vec3::new(0.0, 0.0, 0.0),
-            cached_transform: Mat4::identity().inversed()
+            cached_transform: Mat4::identity().inversed(),
         }
     }
 
@@ -79,22 +81,87 @@ impl Camera {
     }
 }
 
+struct WindowFrameBuffer {
+    pub swapchain_image_views: Vec<Arc<ImageView>>,
+    pub depth_image_view: Arc<ImageView>,
+}
+
+impl WindowFrameBuffer {
+    pub fn new(viewport: &mut Viewport, memory_allocator: Arc<dyn MemoryAllocator>, images: &[Arc<Image>]) -> WindowFrameBuffer {
+        let extent = images[0].extent();
+        viewport.extent = [extent[0] as f32, extent[1] as f32];
+
+        let depth_image_view = ImageView::new_default(
+            Image::new(
+                memory_allocator,
+                ImageCreateInfo {
+                    image_type: ImageType::Dim2d,
+                    format: Format::D16_UNORM,
+                    extent: images[0].extent(),
+                    usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                    ..Default::default()
+                },
+                AllocationCreateInfo::default(),
+            ).unwrap(),
+        ).unwrap();
+
+        let swapchain_image_views = images
+            .iter()
+            .map(|image| ImageView::new_default(image.clone()).unwrap())
+            .collect::<Vec<_>>();
+
+        WindowFrameBuffer {
+            swapchain_image_views,
+            depth_image_view,
+        }
+    }
+
+    pub fn update(&mut self, viewport: &mut Viewport, memory_allocator: Arc<dyn MemoryAllocator>, images: &[Arc<Image>]) {
+        let extent = images[0].extent();
+        viewport.extent = [extent[0] as f32, extent[1] as f32];
+
+        self.depth_image_view = ImageView::new_default(
+            Image::new(
+                memory_allocator,
+                ImageCreateInfo {
+                    image_type: ImageType::Dim2d,
+                    format: Format::D16_UNORM,
+                    extent: images[0].extent(),
+                    usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                    ..Default::default()
+                },
+                AllocationCreateInfo::default(),
+            ).unwrap(),
+        ).unwrap();
+
+        self.swapchain_image_views = images
+            .iter()
+            .map(|image| ImageView::new_default(image.clone()).unwrap())
+            .collect::<Vec<_>>()
+    }
+}
+
 fn main() {
     let event_loop = EventLoop::new();
     let window = Arc::new(WindowBuilder::new()
         .with_title("trinity-rs")
         .build(&event_loop).unwrap());
 
-    let mut renderer = Renderer::new(window.clone(), &event_loop);
+    // Renderer Setup
+    let info = Renderer::new(window.clone(), &event_loop);
+    let mut renderer = info.0;
+    let images = info.1;
+    let fbo = Arc::new(Mutex::new(WindowFrameBuffer::new(&mut renderer.viewport, renderer.allocator.clone(), images.as_slice())));
+
+    // Graph Setup
     let model = RenderModel::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00.trmdl"), renderer.allocator.clone());
+    let camera = Arc::new(Mutex::new(Camera::new()));
+    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0, camera.clone(), fbo.clone()); // load the non-lod mesh
+    renderer.add_recorder(triangle_renderer);
 
-    let mut camera = Arc::new(Mutex::new(Camera::new()));
-    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0, camera.clone()); // load the non-lod mesh
-    renderer.record(triangle_renderer);
-
+    // Logic Setup
     let mut move_forward = false;
     let mut move_backward = false;
-
     event_loop.run(move |event, _, control_flow| {
         match event {
             Event::WindowEvent {
@@ -120,12 +187,12 @@ fn main() {
                         Some(VirtualKeyCode::W) => {
                             move_forward = true;
                             move_backward = false;
-                        },
+                        }
                         Some(VirtualKeyCode::S) => {
                             move_forward = false;
                             move_backward = true;
-                        },
-                        _ => {},
+                        }
+                        _ => {}
                     }
                 }
 
@@ -133,15 +200,36 @@ fn main() {
                     match input.virtual_keycode {
                         Some(VirtualKeyCode::W) => {
                             move_forward = false;
-                        },
+                        }
                         Some(VirtualKeyCode::S) => {
                             move_backward = false;
-                        },
-                        _ => {},
+                        }
+                        _ => {}
                     }
                 }
             }
             Event::RedrawEventsCleared => {
+                let image_extent: [u32; 2] = renderer.window.inner_size().into();
+
+                if image_extent.contains(&0) {
+                    return;
+                }
+
+                renderer.previous_frame_end.as_mut().unwrap().cleanup_finished();
+
+                if renderer.recreate_swapchain {
+                    let (new_swapchain, new_images) = renderer.swapchain
+                        .recreate(SwapchainCreateInfo {
+                            image_extent,
+                            ..renderer.swapchain.create_info()
+                        })
+                        .expect("failed to recreate swapchain");
+
+                    renderer.swapchain = new_swapchain;
+                    fbo.lock().unwrap().update(&mut renderer.viewport, renderer.allocator.clone(), new_images.as_slice());
+                    renderer.recreate_swapchain = false;
+                }
+
                 renderer.render();
                 let mut cam = camera.lock().unwrap();
 
@@ -151,24 +239,25 @@ fn main() {
                 }
                 if move_backward {
                     cam.translate(0.0, 0.0, -0.1);
-                    println!("{}",cam.translation.z);
+                    println!("{}", cam.translation.z);
                 }
-            },
+            }
             _ => (),
         }
     });
 }
 
 struct ModelRenderGraph {
+    fbo: Arc<Mutex<WindowFrameBuffer>>,
     camera: Arc<Mutex<Camera>>,
     pipeline: Arc<GraphicsPipeline>,
     indirect_buffer: Subbuffer<[DrawIndexedIndirectCommand]>,
     target_mesh: RenderModel,
-    model_transform: Mat4
+    model_transform: Mat4,
 }
 
 impl ModelRenderGraph {
-    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize, camera: Arc<Mutex<Camera>>) -> ModelRenderGraph {
+    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>) -> ModelRenderGraph {
         let pipeline = {
             let vs = vs::load(renderer.device.clone())
                 .unwrap()
@@ -193,6 +282,7 @@ impl ModelRenderGraph {
 
             let subpass = PipelineRenderingCreateInfo {
                 color_attachment_formats: vec![Some(renderer.swapchain.image_format())],
+                depth_attachment_format: Some(Format::D16_UNORM),
                 ..Default::default()
             };
 
@@ -244,12 +334,10 @@ impl ModelRenderGraph {
                     vertex_input_state: Some(vertex_layout),
                     input_assembly_state: Some(InputAssemblyState::default()),
                     viewport_state: Some(ViewportState::viewport_dynamic_scissor_irrelevant()),
-                    rasterization_state: Some(RasterizationState::default()
-                        .front_face(FrontFace::Clockwise)),
+                    rasterization_state: Some(RasterizationState::default().front_face(FrontFace::Clockwise)),
+                    depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
                     multisample_state: Some(MultisampleState::default()),
-                    color_blend_state: Some(ColorBlendState::new(
-                        subpass.color_attachment_formats.len() as u32,
-                    )),
+                    color_blend_state: Some(ColorBlendState::new(subpass.color_attachment_formats.len() as u32, )),
                     // depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
                     subpass: Some(subpass.into()),
                     ..GraphicsPipelineCreateInfo::layout(layout)
@@ -276,6 +364,7 @@ impl ModelRenderGraph {
             .copy_from_slice(target_mesh.draw_calls.as_slice());
 
         ModelRenderGraph {
+            fbo,
             camera,
             target_mesh,
             pipeline,
@@ -299,28 +388,24 @@ impl Recorder for ModelRenderGraph {
         builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
         _device: Arc<Device>,
         _swapchain: Arc<Swapchain>,
-        window_image_views: &Vec<Arc<ImageView>>,
         viewport: Viewport,
         image_index: usize,
     ) {
+        let framebuffer = self.fbo.lock().unwrap();
         builder
             .begin_rendering(RenderingInfo {
                 color_attachments: vec![Some(RenderingAttachmentInfo {
                     load_op: AttachmentLoadOp::Clear,
                     store_op: AttachmentStoreOp::Store,
                     clear_value: Some([0.0, 0.0, 1.0, 1.0].into()),
-                    ..RenderingAttachmentInfo::image_view(
-                        window_image_views[image_index].clone(),
-                    )
+                    ..RenderingAttachmentInfo::image_view(framebuffer.swapchain_image_views[image_index].clone())
                 })],
-                // depth_attachment: Some(RenderingAttachmentInfo {
-                //     load_op: AttachmentLoadOp::Clear,
-                //     store_op: AttachmentStoreOp::Store,
-                //     clear_value: Some([0.0, 0.0, 0.0, 1.0].into()),
-                //     ..RenderingAttachmentInfo::image_view(
-                //         window_image_views[image_index].clone(),
-                //     )
-                // }),
+                depth_attachment: Some(RenderingAttachmentInfo {
+                    load_op: AttachmentLoadOp::Clear,
+                    store_op: AttachmentStoreOp::DontCare,
+                    clear_value: Some(1f32.into()),
+                    ..RenderingAttachmentInfo::image_view(framebuffer.depth_image_view.clone())
+                }),
                 ..Default::default()
             }).unwrap()
             .set_viewport(0, [viewport.clone()].into_iter().collect()).unwrap();

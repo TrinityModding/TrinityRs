@@ -3,11 +3,12 @@ use std::sync::Arc;
 use vulkano::{command_buffer::allocator::StandardCommandBufferAllocator, device::{
     Device, DeviceCreateInfo, DeviceExtensions, Features, physical::PhysicalDevice, physical::PhysicalDeviceType,
     QueueCreateInfo, QueueFlags,
-}, image::{Image, ImageUsage, view::ImageView}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo}, pipeline::graphics::viewport::Viewport, swapchain::{
+}, image::{ImageUsage}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo}, pipeline::graphics::viewport::Viewport, swapchain::{
     Surface, Swapchain, SwapchainCreateInfo,
 }, sync::{self, GpuFuture}, Validated, Version, VulkanError, VulkanLibrary};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use vulkano::device::Queue;
+use vulkano::image::Image;
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::swapchain::{acquire_next_image, SwapchainPresentInfo};
 use winit::event_loop::EventLoop;
@@ -19,16 +20,14 @@ pub trait Recorder {
         builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
         device: Arc<Device>,
         swapchain: Arc<Swapchain>,
-        window_image_views: &Vec<Arc<ImageView>>,
         viewport: Viewport,
-        image_index: usize
+        image_index: usize,
     );
 }
 
 pub struct Renderer {
     pub command_buffer_recorders: Vec<Box<dyn Recorder>>,
     pub recreate_swapchain: bool,
-    pub window_image_views: Vec<Arc<ImageView>>,
     pub previous_frame_end: Option<Box<dyn GpuFuture>>,
     pub command_buffer_allocator: StandardCommandBufferAllocator,
     pub swapchain: Arc<Swapchain>,
@@ -36,15 +35,15 @@ pub struct Renderer {
     pub queue: Arc<Queue>,
     pub device: Arc<Device>,
     pub viewport: Viewport,
-    pub allocator: Arc<StandardMemoryAllocator>
+    pub allocator: Arc<StandardMemoryAllocator>,
 }
 
 impl Renderer {
-    pub fn record<P>(&mut self, predicate: P) where P: Recorder + 'static, {
+    pub fn add_recorder<P>(&mut self, predicate: P) where P: Recorder + 'static, {
         self.command_buffer_recorders.push(Box::new(predicate));
     }
 
-    pub fn new(window: Arc<Window>, event_loop: &EventLoop<()>) -> Renderer {
+    pub fn new(window: Arc<Window>, event_loop: &EventLoop<()>) -> (Renderer, Vec<Arc<Image>>) {
         let library = VulkanLibrary::new().unwrap();
         let required_extensions = Surface::required_extensions(&event_loop);
         let mut enabled_layers = Vec::new();
@@ -162,53 +161,30 @@ impl Renderer {
 
                     ..Default::default()
                 },
-            )
-                .unwrap()
+            ).unwrap()
         };
 
-        let mut viewport = Viewport {
+        let viewport = Viewport {
             offset: [0.0, 0.0],
             extent: [0.0, 0.0],
             depth_range: 0.0..=1.0,
         };
 
-        Renderer {
+        (Renderer {
             command_buffer_recorders: vec!(),
             swapchain,
             window,
             queue,
             recreate_swapchain: false,
-            window_image_views: update_viewport(&images, &mut viewport),
             previous_frame_end: Some(sync::now(device.clone()).boxed()),
             command_buffer_allocator: StandardCommandBufferAllocator::new(device.clone(), Default::default()),
             device: device.clone(),
             viewport,
-            allocator: Arc::new(StandardMemoryAllocator::new_default(device.clone()))
-        }
+            allocator: Arc::new(StandardMemoryAllocator::new_default(device.clone())),
+        }, images)
     }
 
     pub fn render(&mut self) {
-        let image_extent: [u32; 2] = self.window.inner_size().into();
-
-        if image_extent.contains(&0) {
-            return;
-        }
-
-        self.previous_frame_end.as_mut().unwrap().cleanup_finished();
-
-        if self.recreate_swapchain {
-            let (new_swapchain, new_images) = self.swapchain
-                .recreate(SwapchainCreateInfo {
-                    image_extent,
-                    ..self.swapchain.create_info()
-                })
-                .expect("failed to recreate swapchain");
-
-            self.swapchain = new_swapchain;
-            self.window_image_views = update_viewport(&new_images, &mut self.viewport);
-            self.recreate_swapchain = false;
-        }
-
         let (image_index, suboptimal, acquire_future) =
             match acquire_next_image(self.swapchain.clone(), None).map_err(Validated::unwrap) {
                 Ok(r) => r,
@@ -230,7 +206,7 @@ impl Renderer {
         ).unwrap();
 
         for x in &self.command_buffer_recorders {
-            x.record(&mut builder, self.device.clone(), self.swapchain.clone(), &self.window_image_views, self.viewport.clone(), image_index as usize);
+            x.record(&mut builder, self.device.clone(), self.swapchain.clone(), self.viewport.clone(), image_index as usize);
         }
 
         // Finish building the command buffer by calling `build`.
@@ -262,19 +238,6 @@ impl Renderer {
             }
         }
     }
-}
-
-fn update_viewport(
-    images: &[Arc<Image>],
-    viewport: &mut Viewport,
-) -> Vec<Arc<ImageView>> {
-    let extent = images[0].extent();
-    viewport.extent = [extent[0] as f32, extent[1] as f32];
-
-    images
-        .iter()
-        .map(|image| ImageView::new_default(image.clone()).unwrap())
-        .collect::<Vec<_>>()
 }
 
 fn supports_dynamic_rendering(p: &PhysicalDevice) -> bool {
