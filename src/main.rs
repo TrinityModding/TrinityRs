@@ -156,10 +156,12 @@ fn main() {
     let images = info.1;
     let fbo = Arc::new(Mutex::new(WindowFrameBuffer::new(&mut renderer.viewport, renderer.allocator.clone(), images.as_slice())));
 
-    // Graph Setup
+    // Graph/Scene Setup
     let model = RenderModel::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00.trmdl"), renderer.allocator.clone());
+    let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
+    model_transform.lock().unwrap().append_translation(Vec3::new(0.0, -0.3, 0.0));
     let camera = Arc::new(Mutex::new(Camera::new()));
-    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0, camera.clone(), fbo.clone()); // load the non-lod mesh
+    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0, camera.clone(), fbo.clone(), model_transform.clone()); // load the non-lod mesh
     renderer.add_recorder(triangle_renderer);
 
     // Logic Setup
@@ -213,13 +215,10 @@ fn main() {
             }
             Event::RedrawEventsCleared => {
                 let image_extent: [u32; 2] = renderer.window.inner_size().into();
-
                 if image_extent.contains(&0) {
                     return;
                 }
-
                 renderer.previous_frame_end.as_mut().unwrap().cleanup_finished();
-
                 if renderer.recreate_swapchain {
                     let (new_swapchain, new_images) = renderer.swapchain
                         .recreate(SwapchainCreateInfo {
@@ -232,17 +231,16 @@ fn main() {
                     fbo.lock().unwrap().update(&mut renderer.viewport, renderer.allocator.clone(), new_images.as_slice());
                     renderer.recreate_swapchain = false;
                 }
-
                 renderer.render();
-                let mut cam = camera.lock().unwrap();
 
+                model_transform.lock().unwrap().append_rotation(Rotor3::from_euler_angles(0.0, 0.0, 0.05));
+
+                let mut cam = camera.lock().unwrap();
                 if move_forward {
-                    cam.translate(0.0, 0.0, 0.1);
-                    println!("{}", cam.translation.z);
+                    cam.translate(0.0, 0.0, 0.05);
                 }
                 if move_backward {
-                    cam.translate(0.0, 0.0, -0.1);
-                    println!("{}", cam.translation.z);
+                    cam.translate(0.0, 0.0, -0.05);
                 }
             }
             _ => (),
@@ -256,11 +254,11 @@ struct ModelRenderGraph {
     pipeline: Arc<GraphicsPipeline>,
     indirect_buffer: Subbuffer<[DrawIndexedIndirectCommand]>,
     target_mesh: RenderModel,
-    model_transform: Similarity3,
+    model_transform: Arc<Mutex<Similarity3>>,
 }
 
 impl ModelRenderGraph {
-    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>) -> ModelRenderGraph {
+    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>) -> ModelRenderGraph {
         let pipeline = {
             let vs = vs::load(renderer.device.clone())
                 .unwrap()
@@ -372,7 +370,7 @@ impl ModelRenderGraph {
             target_mesh,
             pipeline,
             indirect_buffer,
-            model_transform: Similarity3::identity(),
+            model_transform,
         }
     }
 }
@@ -414,7 +412,7 @@ impl Recorder for ModelRenderGraph {
             .set_viewport(0, [viewport.clone()].into_iter().collect()).unwrap();
 
         let proj_matrix = ultraviolet::projection::rh_ydown::perspective_vk(90f32, viewport.extent[0] / viewport.extent[1], 0.1, 1000.0);
-        let model_matrix: Mat4 = self.model_transform.into_homogeneous_matrix();
+        let model_matrix: Mat4 = self.model_transform.lock().unwrap().into_homogeneous_matrix();
 
         let push_constants = vs::PushConstantData {
             projMat: proj_matrix.into(),
