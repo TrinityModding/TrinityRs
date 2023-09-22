@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::ops::Add;
+use std::sync::{Arc, Mutex};
 use ultraviolet::{Mat4, Vec3};
 
 use vulkano::buffer::{BufferUsage, IndexBuffer, Subbuffer};
@@ -24,7 +25,8 @@ use winit::{
     event_loop::EventLoop,
     window::WindowBuilder,
 };
-use winit::event::{Event, WindowEvent};
+use winit::event::{Event, VirtualKeyCode, WindowEvent};
+use winit::event::ElementState::{Pressed, Released};
 use winit::event_loop::ControlFlow;
 
 use crate::io::model::{Attribute, AttributeSize, IndexLayout, RenderModel, RootModel};
@@ -64,7 +66,12 @@ impl Camera {
     }
 
     pub fn update(&mut self) {
+        self.cached_transform = Mat4::identity().translated(&self.translation);
+    }
 
+    pub fn translate(&mut self, x: f32, y: f32, z: f32) {
+        self.translation = self.translation.add(Vec3::new(x, y, z));
+        self.update();
     }
 
     pub fn get_matrix(&self) -> Mat4 {
@@ -81,8 +88,12 @@ fn main() {
     let mut renderer = Renderer::new(window.clone(), &event_loop);
     let model = RenderModel::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00.trmdl"), renderer.allocator.clone());
 
-    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0); // load the non-lod mesh
+    let mut camera = Arc::new(Mutex::new(Camera::new()));
+    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0, camera.clone()); // load the non-lod mesh
     renderer.record(triangle_renderer);
+
+    let mut move_forward = false;
+    let mut move_backward = false;
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -98,24 +109,66 @@ fn main() {
             } => {
                 renderer.recreate_swapchain = true;
             }
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput {
+                    device_id: _device_id, input, is_synthetic: _is_synthetic
+                },
+                ..
+            } => {
+                if input.state == Pressed {
+                    match input.virtual_keycode {
+                        Some(VirtualKeyCode::W) => {
+                            move_forward = true;
+                            move_backward = false;
+                        },
+                        Some(VirtualKeyCode::S) => {
+                            move_forward = false;
+                            move_backward = true;
+                        },
+                        _ => {},
+                    }
+                }
+
+                if input.state == Released {
+                    match input.virtual_keycode {
+                        Some(VirtualKeyCode::W) => {
+                            move_forward = false;
+                        },
+                        Some(VirtualKeyCode::S) => {
+                            move_backward = false;
+                        },
+                        _ => {},
+                    }
+                }
+            }
             Event::RedrawEventsCleared => {
                 renderer.render();
-            }
+                let mut cam = camera.lock().unwrap();
+
+                if move_forward {
+                    cam.translate(0.0, 0.0, 0.1);
+                    println!("{}", cam.translation.z);
+                }
+                if move_backward {
+                    cam.translate(0.0, 0.0, -0.1);
+                    println!("{}",cam.translation.z);
+                }
+            },
             _ => (),
         }
     });
 }
 
-#[derive(Clone)]
 struct ModelRenderGraph {
-    push_constants: vs::PushConstantData,
+    camera: Arc<Mutex<Camera>>,
     pipeline: Arc<GraphicsPipeline>,
     indirect_buffer: Subbuffer<[DrawIndexedIndirectCommand]>,
     target_mesh: RenderModel,
+    model_transform: Mat4
 }
 
 impl ModelRenderGraph {
-    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize) -> ModelRenderGraph {
+    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize, camera: Arc<Mutex<Camera>>) -> ModelRenderGraph {
         let pipeline = {
             let vs = vs::load(renderer.device.clone())
                 .unwrap()
@@ -222,23 +275,12 @@ impl ModelRenderGraph {
             .write().unwrap()
             .copy_from_slice(target_mesh.draw_calls.as_slice());
 
-        let proj_matrix = ultraviolet::projection::lh_ydown::perspective_reversed_z_vk(90f32, renderer.viewport.extent[0] / renderer.viewport.extent[1], 0.1, 1000.0);
-        let camera = Camera::new();
-        let mut model_transform = Mat4::identity();
-        let vec = Vec3::new(0.0, 0.0, -10.0);
-        model_transform.translate(&vec);
-
-        let push_constants = vs::PushConstantData {
-            projMat: proj_matrix.into(),
-            viewMat: camera.get_matrix().into(),
-            modelTransform: model_transform.into(),
-        };
-
         ModelRenderGraph {
-            push_constants,
+            camera,
             target_mesh,
             pipeline,
             indirect_buffer,
+            model_transform: Mat4::identity(),
         }
     }
 }
@@ -281,10 +323,18 @@ impl Recorder for ModelRenderGraph {
                 // }),
                 ..Default::default()
             }).unwrap()
-            .set_viewport(0, [viewport].into_iter().collect()).unwrap();
+            .set_viewport(0, [viewport.clone()].into_iter().collect()).unwrap();
+
+        let proj_matrix = ultraviolet::projection::rh_ydown::perspective_vk(90f32, viewport.extent[0] / viewport.extent[1], 0.1, 1000.0);
+
+        let push_constants = vs::PushConstantData {
+            projMat: proj_matrix.into(),
+            viewMat: self.camera.lock().unwrap().get_matrix().into(),
+            modelTransform: self.model_transform.into(),
+        };
 
         builder
-            .push_constants(self.pipeline.layout().clone(), 0, self.push_constants).unwrap()
+            .push_constants(self.pipeline.layout().clone(), 0, push_constants).unwrap()
             .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
             .bind_vertex_buffers(0, self.target_mesh.vertex_buffer.clone()).unwrap();
 
