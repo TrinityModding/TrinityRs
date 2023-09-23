@@ -1,6 +1,6 @@
 use std::ops::Add;
 use std::sync::{Arc, Mutex};
-use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3};
+use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3, Vec4};
 
 use vulkano::buffer::{BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
@@ -237,10 +237,10 @@ fn main() {
 
                 let mut cam = camera.lock().unwrap();
                 if move_forward {
-                    cam.translate(0.0, 0.0, 0.05);
+                    cam.translate(0.0, 0.0, 0.01);
                 }
                 if move_backward {
-                    cam.translate(0.0, 0.0, -0.05);
+                    cam.translate(0.0, 0.0, -0.01);
                 }
             }
             _ => (),
@@ -411,7 +411,21 @@ impl Recorder for ModelRenderGraph {
             }).unwrap()
             .set_viewport(0, [viewport.clone()].into_iter().collect()).unwrap();
 
-        let proj_matrix = ultraviolet::projection::rh_ydown::perspective_vk(90f32, viewport.extent[0] / viewport.extent[1], 0.1, 1000.0);
+        pub fn perspective(vertical_fov: f32, aspect_ratio: f32, z_near: f32, z_far: f32) -> Mat4 {
+            let t = (vertical_fov / 2.0).tan();
+            let sy = 1.0 / t;
+            let sx = sy / aspect_ratio;
+            let r = z_far / (z_far - z_near);
+
+            Mat4::new(
+                Vec4::new(sx, 0.0, 0.0, 0.0),
+                Vec4::new(0.0, -sy, 0.0, 0.0),
+                Vec4::new(0.0, 0.0, r, 1.0),
+                Vec4::new(0.0, 0.0, -z_near * r, 0.0),
+            )
+        }
+
+        let proj_matrix = perspective(90f32, viewport.extent[0] / viewport.extent[1], 0.1, 100.0);
         let model_matrix: Mat4 = self.model_transform.lock().unwrap().into_homogeneous_matrix();
 
         let push_constants = vs::PushConstantData {
