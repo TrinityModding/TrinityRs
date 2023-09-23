@@ -1,16 +1,21 @@
+use std::io::Cursor;
 use std::ops::Add;
 use std::sync::{Arc, Mutex};
 use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3, Vec4};
 
-use vulkano::buffer::{BufferUsage, IndexBuffer, Subbuffer};
+use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, DrawIndexedIndirectCommand, PrimaryAutoCommandBuffer, RenderingAttachmentInfo, RenderingInfo};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo, DrawIndexedIndirectCommand, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderingAttachmentInfo, RenderingInfo};
+use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::descriptor_set::layout::DescriptorBindingFlags;
 use vulkano::device::Device;
+use vulkano::DeviceSize;
 use vulkano::format::Format;
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
+use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo};
 use vulkano::image::view::ImageView;
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, MemoryTypeFilter};
-use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineLayout, PipelineShaderStageCreateInfo};
+use vulkano::pipeline::{GraphicsPipeline, Pipeline, PipelineBindPoint, PipelineLayout, PipelineShaderStageCreateInfo};
 use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
@@ -23,6 +28,7 @@ use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::swapchain::{Swapchain, SwapchainCreateInfo};
+use vulkano::sync::GpuFuture;
 use winit::{
     event_loop::EventLoop,
     window::WindowBuilder,
@@ -160,8 +166,78 @@ fn main() {
     let model = RenderModel::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00.trmdl"), renderer.allocator.clone());
     let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
     model_transform.lock().unwrap().append_translation(Vec3::new(0.0, -0.3, 0.0));
+
+    // TODO: clean this up
+    let mut uploads = AutoCommandBufferBuilder::primary(
+        &renderer.command_buffer_allocator,
+        renderer.queue.queue_family_index(),
+        CommandBufferUsage::OneTimeSubmit,
+    ).unwrap();
+
+    let mascot_texture = {
+        let png_bytes = include_bytes!("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00_body_alb.png").to_vec();
+        let cursor = Cursor::new(png_bytes);
+        let decoder = png::Decoder::new(cursor);
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
+        let extent = [info.width, info.height, 1];
+
+        let upload_buffer = Buffer::new_slice(
+            renderer.allocator.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::TRANSFER_SRC,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_HOST
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+            (info.width * info.height * 4) as DeviceSize,
+        ).unwrap();
+
+        reader.next_frame(&mut upload_buffer.write().unwrap()).unwrap();
+
+        let image = Image::new(
+            renderer.allocator.clone(),
+            ImageCreateInfo {
+                image_type: ImageType::Dim2d,
+                format: Format::R8G8B8A8_SRGB,
+                extent,
+                usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+                ..Default::default()
+            },
+            AllocationCreateInfo::default(),
+        ).unwrap();
+
+        uploads
+            .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
+                upload_buffer,
+                image.clone(),
+            )).unwrap();
+
+        ImageView::new_default(image).unwrap()
+    };
+
+    let sampler = Sampler::new(
+        renderer.device.clone(),
+        SamplerCreateInfo {
+            mag_filter: Filter::Nearest,
+            min_filter: Filter::Nearest,
+            address_mode: [SamplerAddressMode::Repeat; 3],
+            ..Default::default()
+        },
+    ).unwrap();
+
+    renderer.previous_frame_end = Some(
+        uploads
+            .build().unwrap()
+            .execute(renderer.queue.clone()).unwrap()
+            .boxed(),
+    );
+
     let camera = Arc::new(Mutex::new(Camera::new()));
-    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0, camera.clone(), fbo.clone(), model_transform.clone()); // load the non-lod mesh
+    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0, camera.clone(), fbo.clone(), model_transform.clone(), mascot_texture, sampler); // load the non-lod mesh
     renderer.add_recorder(triangle_renderer);
 
     // Logic Setup
@@ -255,10 +331,11 @@ struct ModelRenderGraph {
     indirect_buffer: Subbuffer<[DrawIndexedIndirectCommand]>,
     target_mesh: RenderModel,
     model_transform: Arc<Mutex<Similarity3>>,
+    set: Arc<PersistentDescriptorSet>,
 }
 
 impl ModelRenderGraph {
-    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>) -> ModelRenderGraph {
+    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>, tex: Arc<ImageView>, sampler: Arc<Sampler>) -> ModelRenderGraph {
         let pipeline = {
             let vs = vs::load(renderer.device.clone())
                 .unwrap()
@@ -274,9 +351,18 @@ impl ModelRenderGraph {
                 PipelineShaderStageCreateInfo::new(fs),
             ];
 
+            let mut layout_create_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages);
+
+            // Adjust the info for set 0, binding 0 to make it variable with 2 descriptors.
+            let binding = layout_create_info.set_layouts[0]
+                .bindings
+                .get_mut(&0).unwrap();
+            binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
+            binding.descriptor_count = 1;
+
             let layout = PipelineLayout::new(
                 renderer.device.clone(),
-                PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages)
+                layout_create_info
                     .into_pipeline_layout_create_info(renderer.device.clone())
                     .unwrap(),
             ).unwrap();
@@ -321,8 +407,6 @@ impl ModelRenderGraph {
                 offset += size;
             }
 
-            println!("Vertex Layout for model: {:?}", model.attributes);
-
             let vertex_layout = VertexInputState::new()
                 .attributes(vertex_attributes)
                 .bindings(vertex_bindings);
@@ -345,6 +429,22 @@ impl ModelRenderGraph {
                 },
             ).unwrap()
         };
+
+
+        let layout = pipeline.layout().set_layouts().get(0).unwrap();
+        let set = PersistentDescriptorSet::new_variable(
+            &renderer.descriptor_set_allocator,
+            layout.clone(),
+            1,
+            [WriteDescriptorSet::image_view_sampler_array(
+                0,
+                0,
+                [
+                    (tex as _, sampler.clone())
+                ],
+            )],
+            [],
+        ).unwrap();
 
         let indirect_args_pool = SubbufferAllocator::new(
             renderer.allocator.clone(),
@@ -371,6 +471,7 @@ impl ModelRenderGraph {
             pipeline,
             indirect_buffer,
             model_transform,
+            set
         }
     }
 }
@@ -437,6 +538,12 @@ impl Recorder for ModelRenderGraph {
         builder
             .push_constants(self.pipeline.layout().clone(), 0, push_constants).unwrap()
             .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.pipeline.layout().clone(),
+                0,
+                self.set.clone()
+            ).unwrap()
             .bind_vertex_buffers(0, self.target_mesh.vertex_buffer.clone()).unwrap();
 
         let src = self.target_mesh.index_buffer.clone();

@@ -7,6 +7,7 @@ use vulkano::{command_buffer::allocator::StandardCommandBufferAllocator, device:
     Surface, Swapchain, SwapchainCreateInfo,
 }, sync::{self, GpuFuture}, Validated, Version, VulkanError, VulkanLibrary};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::device::Queue;
 use vulkano::image::Image;
 use vulkano::memory::allocator::StandardMemoryAllocator;
@@ -30,6 +31,7 @@ pub struct Renderer {
     pub recreate_swapchain: bool,
     pub previous_frame_end: Option<Box<dyn GpuFuture>>,
     pub command_buffer_allocator: StandardCommandBufferAllocator,
+    pub descriptor_set_allocator: StandardDescriptorSetAllocator,
     pub swapchain: Arc<Swapchain>,
     pub window: Arc<Window>,
     pub queue: Arc<Queue>,
@@ -86,7 +88,6 @@ impl Renderer {
 
                     .map(|i| (p, i as u32))
             })
-
             .min_by_key(|(p, _)| {
                 match p.properties().device_type {
                     PhysicalDeviceType::DiscreteGpu => 0,
@@ -122,6 +123,7 @@ impl Renderer {
                 enabled_features: Features {
                     dynamic_rendering: true,
                     multi_draw_indirect: true,
+                    descriptor_binding_variable_descriptor_count: true,
                     ..Features::empty()
                 },
 
@@ -178,6 +180,7 @@ impl Renderer {
             recreate_swapchain: false,
             previous_frame_end: Some(sync::now(device.clone()).boxed()),
             command_buffer_allocator: StandardCommandBufferAllocator::new(device.clone(), Default::default()),
+            descriptor_set_allocator: StandardDescriptorSetAllocator::new(device.clone()),
             device: device.clone(),
             viewport,
             allocator: Arc::new(StandardMemoryAllocator::new_default(device.clone())),
