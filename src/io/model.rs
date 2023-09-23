@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::mem::size_of;
 use std::path::PathBuf;
@@ -16,21 +17,21 @@ use crate::io::flatbuffers::trmtr_generated::titan::model::root_as_trmtr;
 
 /// Holds the sub-models inside of a model
 #[derive(Clone, Debug)]
-pub struct RootModel {
-    pub meshes: Vec<RenderModel>,
-    pub attributes: Vec<Attribute>
+pub struct MeshGroup {
+    pub sub_meshes: Vec<SubMesh>,
+    pub vertex_buffer: Subbuffer<[u8]>,
+    pub index_buffer: Subbuffer<[u8]>,
+    pub idx_layout: IndexLayout,
+    pub attributes: Vec<Attribute>,
 }
 
 #[derive(Clone, Debug)]
-pub struct RenderModel {
-    pub vertex_buffer: Subbuffer<[u8]>,
-    pub index_buffer: Subbuffer<[u8]>,
+pub struct SubMesh {
     pub draw_calls: Vec<DrawIndexedIndirectCommand>,
-    pub idx_layout: IndexLayout,
 }
 
-impl RenderModel {
-    pub fn from_trmdl(file_path: String, allocator: Arc<StandardMemoryAllocator>) -> RootModel {
+impl SubMesh {
+    pub fn from_trmdl(file_path: String, allocator: Arc<StandardMemoryAllocator>) -> HashMap<String, Vec<Arc<MeshGroup>>> {
         let mut path = PathBuf::new();
         path.push(file_path);
         let file_bytes = fs::read(path.to_str().unwrap()).unwrap();
@@ -42,21 +43,18 @@ impl RenderModel {
         let _material = root_as_trmtr(trmtr_bytes.as_slice());
         path.pop();
 
-        let mesh_map = trmdl.meshes().unwrap().iter().map(|x| {
+        let mut result_map: HashMap<String, Vec<Arc<MeshGroup>>> = HashMap::new();
+
+        trmdl.meshes().unwrap().iter().for_each(|x| {
             let trmsh_path = x.filename().unwrap();
             let trmbf_path = String::from(trmsh_path).replace(".trmsh", ".trmbf");
 
             let trmsh_bytes = fs::read(path.join(trmsh_path).to_str().unwrap()).unwrap();
             let trmbf_bytes = fs::read(path.join(trmbf_path).to_str().unwrap()).unwrap();
-            (trmsh_bytes, trmbf_bytes)
-        });
 
-        let mut attributes: Vec<Attribute> = Vec::new();
-
-        let mut models = Vec::new();
-        for mesh in mesh_map {
-            let trmsh = root_as_trmsh(mesh.0.as_slice()).unwrap();
-            let trmbf = root_as_trmbf(mesh.1.as_slice()).unwrap();
+            let trmsh = root_as_trmsh(trmsh_bytes.as_slice()).unwrap();
+            let trmbf = root_as_trmbf(trmbf_bytes.as_slice()).unwrap();
+            let mut models = Vec::new();
 
             for mesh_idx in 0..trmsh.meshes().unwrap().len() {
                 let info = trmsh.meshes().unwrap().get(mesh_idx);
@@ -65,8 +63,9 @@ impl RenderModel {
                 let idx_buffer = data.index_buffer().unwrap().get(0);
                 let idx_layout = IndexLayout::get(info.polygon_type()).unwrap();
                 let raw_attributes = info.attributes().unwrap().get(0);
+                let mut meshes = Vec::new();
 
-                attributes = Vec::new();
+                let mut attributes = Vec::new();
                 for attr in raw_attributes.attrs().unwrap() {
                     attributes.push(Attribute {
                         type_: AttributeType::get(attr.attribute()).unwrap(),
@@ -86,6 +85,9 @@ impl RenderModel {
                     })
                 }
 
+                meshes.push(SubMesh {
+                    draw_calls
+                });
 
                 let vertex_data = vertex_buffer.buffer().unwrap().bytes();
                 let vertex_buffer = Buffer::new_slice(
@@ -117,19 +119,21 @@ impl RenderModel {
                 ).unwrap();
                 index_buffer.write().unwrap().copy_from_slice(index_data);
 
-                models.push(RenderModel {
+                models.push(Arc::new(MeshGroup {
+                    sub_meshes: meshes,
                     vertex_buffer,
                     index_buffer,
-                    draw_calls,
-                    idx_layout
-                });
+                    idx_layout,
+                    attributes,
+                }));
             }
-        }
 
-        RootModel {
-            meshes: models,
-            attributes,
-        }
+            result_map
+                .entry(String::from(x.filename().unwrap()))
+                .or_insert(models);
+        });
+
+        result_map
     }
 }
 

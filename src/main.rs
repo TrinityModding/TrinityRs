@@ -37,7 +37,7 @@ use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event::ElementState::{Pressed, Released};
 use winit::event_loop::ControlFlow;
 
-use crate::io::model::{Attribute, AttributeSize, IndexLayout, RenderModel, RootModel};
+use crate::io::model::{Attribute, AttributeSize, IndexLayout, SubMesh, MeshGroup};
 use crate::rendering::renderer::{Recorder, Renderer};
 
 mod rendering;
@@ -163,7 +163,7 @@ fn main() {
     let fbo = Arc::new(Mutex::new(WindowFrameBuffer::new(&mut renderer.viewport, renderer.allocator.clone(), images.as_slice())));
 
     // Graph/Scene Setup
-    let model = RenderModel::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00.trmdl"), renderer.allocator.clone());
+    let model = SubMesh::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00.trmdl"), renderer.allocator.clone());
     let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
     model_transform.lock().unwrap().append_translation(Vec3::new(0.0, -0.3, 0.0));
 
@@ -237,7 +237,7 @@ fn main() {
     );
 
     let camera = Arc::new(Mutex::new(Camera::new()));
-    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model, 0, camera.clone(), fbo.clone(), model_transform.clone(), mascot_texture, sampler); // load the non-lod mesh
+    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model.get("pm0855_00_00_lod2.trmsh").unwrap(), camera.clone(), fbo.clone(), model_transform.clone(), mascot_texture, sampler); // load the non-lod mesh
     renderer.add_recorder(triangle_renderer);
 
     // Logic Setup
@@ -328,14 +328,25 @@ struct ModelRenderGraph {
     fbo: Arc<Mutex<WindowFrameBuffer>>,
     camera: Arc<Mutex<Camera>>,
     pipeline: Arc<GraphicsPipeline>,
-    indirect_buffer: Subbuffer<[DrawIndexedIndirectCommand]>,
-    target_mesh: RenderModel,
+    target_mesh: Vec<UploadedModel>,
     model_transform: Arc<Mutex<Similarity3>>,
     set: Arc<PersistentDescriptorSet>,
 }
 
+struct UploadedModel {
+    pub vertex_buffer: Subbuffer<[u8]>,
+    pub index_buffer: Subbuffer<[u8]>,
+    pub draw_calls: Vec<UploadedDraw>,
+    index_layout: IndexLayout,
+}
+
+struct UploadedDraw {
+    indirect_call: Subbuffer<[DrawIndexedIndirectCommand]>,
+    // TODO: texture stuff (and optionally pipeline stuff) goes here
+}
+
 impl ModelRenderGraph {
-    pub fn new(renderer: &mut Renderer, model: RootModel, mesh_idx: usize, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>, tex: Arc<ImageView>, sampler: Arc<Sampler>) -> ModelRenderGraph {
+    pub fn new(renderer: &mut Renderer, model: &Vec<Arc<MeshGroup>>, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>, tex: Arc<ImageView>, sampler: Arc<Sampler>) -> ModelRenderGraph {
         let pipeline = {
             let vs = vs::load(renderer.device.clone())
                 .unwrap()
@@ -375,10 +386,11 @@ impl ModelRenderGraph {
 
             let mut vertex_attributes = Vec::new();
             let mut vertex_bindings = Vec::new();
-            let total_size = calculate_element_size(&model.attributes);
+            let attribs = &model.get(0).unwrap().attributes;
+            let total_size = calculate_element_size(attribs);
             let mut offset = 0;
-            for attr_idx in 0..model.attributes.len() {
-                let attribute = model.attributes.get(attr_idx).unwrap();
+            for attr_idx in 0..attribs.len() {
+                let attribute = attribs.get(attr_idx).unwrap();
                 let vk_type = match attribute.size {
                     AttributeSize::None(_, _) => panic!("impossible"),
                     AttributeSize::Rgba8UNorm(_, _) => Format::R8G8B8A8_UNORM,
@@ -422,14 +434,12 @@ impl ModelRenderGraph {
                     rasterization_state: Some(RasterizationState::default().front_face(FrontFace::Clockwise)),
                     depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
                     multisample_state: Some(MultisampleState::default()),
-                    color_blend_state: Some(ColorBlendState::new(subpass.color_attachment_formats.len() as u32, )),
-                    // depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
+                    color_blend_state: Some(ColorBlendState::new(subpass.color_attachment_formats.len() as u32)),
                     subpass: Some(subpass.into()),
                     ..GraphicsPipelineCreateInfo::layout(layout)
                 },
             ).unwrap()
         };
-
 
         let layout = pipeline.layout().set_layouts().get(0).unwrap();
         let set = PersistentDescriptorSet::new_variable(
@@ -456,22 +466,38 @@ impl ModelRenderGraph {
             },
         );
 
-        let target_mesh = model.meshes.get(mesh_idx).unwrap().to_owned();
+        let mut uploaded_models = Vec::new();
 
-        let indirect_buffer = indirect_args_pool
-            .allocate_slice(target_mesh.draw_calls.len() as _).unwrap();
-        indirect_buffer
-            .write().unwrap()
-            .copy_from_slice(target_mesh.draw_calls.as_slice());
+        for x in model {
+            let mut draw_calls = Vec::new();
+
+            for sub_mesh in &x.sub_meshes {
+                let indirect_calls = indirect_args_pool
+                    .allocate_slice(sub_mesh.draw_calls.len() as _).unwrap();
+                indirect_calls
+                    .write().unwrap()
+                    .copy_from_slice(sub_mesh.draw_calls.as_slice());
+
+                draw_calls.push(UploadedDraw {
+                    indirect_call: indirect_calls,
+                });
+            }
+
+            uploaded_models.push(UploadedModel {
+                vertex_buffer: x.vertex_buffer.clone(),
+                index_buffer: x.index_buffer.clone(),
+                index_layout: x.idx_layout.clone(),
+                draw_calls,
+            });
+        }
 
         ModelRenderGraph {
             fbo,
             camera,
-            target_mesh,
             pipeline,
-            indirect_buffer,
+            target_mesh: uploaded_models,
             model_transform,
-            set
+            set,
         }
     }
 }
@@ -542,19 +568,23 @@ impl Recorder for ModelRenderGraph {
                 PipelineBindPoint::Graphics,
                 self.pipeline.layout().clone(),
                 0,
-                self.set.clone()
-            ).unwrap()
-            .bind_vertex_buffers(0, self.target_mesh.vertex_buffer.clone()).unwrap();
+                self.set.clone(),
+            ).unwrap();
 
-        let src = self.target_mesh.index_buffer.clone();
-        match self.target_mesh.idx_layout {
-            IndexLayout::UInt8(_) => builder.bind_index_buffer(src).unwrap(),
-            IndexLayout::UInt16(_) => builder.bind_index_buffer(IndexBuffer::U16(Subbuffer::reinterpret::<[u16]>(src))).unwrap(),
-            IndexLayout::UInt32(_) => builder.bind_index_buffer(IndexBuffer::U32(Subbuffer::reinterpret::<[u32]>(src))).unwrap(),
-            IndexLayout::UInt64(_) => panic!("64 bit index buffers not supported"),
-        };
+        for mesh in &self.target_mesh {
+            builder.bind_vertex_buffers(0, mesh.vertex_buffer.clone()).unwrap();
+            let src = mesh.index_buffer.clone();
+            match mesh.index_layout {
+                IndexLayout::UInt8(_) => builder.bind_index_buffer(src).unwrap(),
+                IndexLayout::UInt16(_) => builder.bind_index_buffer(IndexBuffer::U16(Subbuffer::reinterpret::<[u16]>(src))).unwrap(),
+                IndexLayout::UInt32(_) => builder.bind_index_buffer(IndexBuffer::U32(Subbuffer::reinterpret::<[u32]>(src))).unwrap(),
+                IndexLayout::UInt64(_) => panic!("64 bit index buffers not supported"),
+            };
 
-        builder.draw_indexed_indirect(self.indirect_buffer.to_owned()).unwrap();
+            for indirect_draw in &mesh.draw_calls {
+                builder.draw_indexed_indirect(indirect_draw.indirect_call.to_owned()).unwrap();
+            }
+        }
 
         builder.end_rendering().unwrap();
     }
