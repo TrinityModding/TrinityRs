@@ -1,20 +1,15 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::io::Cursor;
-use std::mem::size_of;
 use std::ops::Add;
 use std::sync::{Arc, Mutex};
 use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3, Vec4};
-
-use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage, IndexBuffer, Subbuffer};
+use vulkano::buffer::{BufferUsage, IndexBuffer, Subbuffer};
 use vulkano::buffer::allocator::{SubbufferAllocator, SubbufferAllocatorCreateInfo};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferToImageInfo, DrawIndexedIndirectCommand, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderingAttachmentInfo, RenderingInfo};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, DrawIndexedIndirectCommand, PrimaryAutoCommandBuffer, PrimaryCommandBufferAbstract, RenderingAttachmentInfo, RenderingInfo};
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::descriptor_set::layout::DescriptorBindingFlags;
 use vulkano::device::Device;
-use vulkano::DeviceSize;
 use vulkano::format::Format;
-use vulkano::half::f16;
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo};
 use vulkano::image::view::ImageView;
@@ -42,8 +37,9 @@ use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event::ElementState::{Pressed, Released};
 use winit::event_loop::ControlFlow;
 
-use crate::io::model::{Attribute, AttributeSize, IndexLayout, SubMesh, MeshGroup, AttributeType};
+use crate::io::model::{Attribute, AttributeSize, IndexLayout, SubMesh, MeshGroup, AttributeType, RGB32_FLOAT, RGBA16_FLOAT, RG32_FLOAT, RGBA8_UNORM, RGBA8_UNSIGNED, RGBA16_UNORM};
 use crate::rendering::renderer::{Recorder, Renderer};
+use crate::rendering::renderer_utils::load_png;
 
 mod rendering;
 mod io;
@@ -84,28 +80,28 @@ fn main() {
     // Shader Setup
     let mut shaders: HashMap<Vec<Attribute>, Arc<ShaderModule>> = HashMap::new();
     shaders.entry(vec![
-        Attribute::new(AttributeType::Position, AttributeSize::Rgb32Float(51, size_of::<f32>() * 3)),
-        Attribute::new(AttributeType::Normal, AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
-        Attribute::new(AttributeType::Tangent, AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
-        Attribute::new(AttributeType::TextureCoords, AttributeSize::Rg32Float(48, size_of::<f32>() * 2)),
-        Attribute::new(AttributeType::BlendIndices, AttributeSize::Rgba8Unsigned(22, size_of::<u8>() * 4)),
-        Attribute::new(AttributeType::BlendWeights, AttributeSize::Rgba16UNorm(39, size_of::<u16>() * 4)),
+        Attribute::new(AttributeType::Position, RGB32_FLOAT),
+        Attribute::new(AttributeType::Normal, RGBA16_FLOAT),
+        Attribute::new(AttributeType::Tangent, RGBA16_FLOAT),
+        Attribute::new(AttributeType::TextureCoords, RG32_FLOAT),
+        Attribute::new(AttributeType::BlendIndices, RGBA8_UNSIGNED),
+        Attribute::new(AttributeType::BlendWeights, RGBA16_UNORM),
     ]).or_insert(pokemon_pos3_nrm4_tng4_uv2_idx4_wgt4::load(renderer.device.clone()).unwrap());
 
     shaders.entry(vec![
-        Attribute::new(AttributeType::Position, AttributeSize::Rgb32Float(51, size_of::<f32>() * 3)),
-        Attribute::new(AttributeType::Normal, AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
-        Attribute::new(AttributeType::Tangent, AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
-        Attribute::new(AttributeType::TextureCoords, AttributeSize::Rg32Float(48, size_of::<f32>() * 2)),
-        Attribute::new(AttributeType::Color, AttributeSize::Rgba8UNorm(20, size_of::<u8>() * 4)),
-        Attribute::new(AttributeType::BlendIndices, AttributeSize::Rgba8Unsigned(22, size_of::<u8>() * 4)),
-        Attribute::new(AttributeType::BlendWeights, AttributeSize::Rgba16UNorm(39, size_of::<u16>() * 4)),
+        Attribute::new(AttributeType::Position, RGB32_FLOAT),
+        Attribute::new(AttributeType::Normal, RGBA16_FLOAT),
+        Attribute::new(AttributeType::Tangent, RGBA16_FLOAT),
+        Attribute::new(AttributeType::TextureCoords, RG32_FLOAT),
+        Attribute::new(AttributeType::Color, RGBA8_UNORM),
+        Attribute::new(AttributeType::BlendIndices, RGBA8_UNSIGNED),
+        Attribute::new(AttributeType::BlendWeights, RGBA16_UNORM),
     ]).or_insert(pokemon_pos3_nrm4_tng4_uv2_col4_idx4_wgt4::load(renderer.device.clone()).unwrap());
 
     // Graph/Scene Setup
     let model = SubMesh::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm1018/pm1018_00_00/pm1018_00_00.trmdl"), renderer.allocator.clone());
     let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
-    model_transform.lock().unwrap().append_translation(Vec3::new(0.0, -0.3, 0.0));
+    model_transform.lock().unwrap().append_translation(Vec3::new(0.0, -0.8, 0.0));
 
     // TODO: clean this up
     let mut uploads = AutoCommandBufferBuilder::primary(
@@ -116,47 +112,7 @@ fn main() {
 
     let mascot_texture = {
         let png_bytes = include_bytes!("A:/PokemonScarlet/pokemon/data/pm1018/pm1018_00_00/pm1018_00_00_body_a_alb.png").to_vec();
-        let cursor = Cursor::new(png_bytes);
-        let decoder = png::Decoder::new(cursor);
-        let mut reader = decoder.read_info().unwrap();
-        let info = reader.info();
-        let extent = [info.width, info.height, 1];
-
-        let upload_buffer = Buffer::new_slice(
-            renderer.allocator.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::TRANSFER_SRC,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_HOST
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            (info.width * info.height * 4) as DeviceSize,
-        ).unwrap();
-
-        reader.next_frame(&mut upload_buffer.write().unwrap()).unwrap();
-
-        let image = Image::new(
-            renderer.allocator.clone(),
-            ImageCreateInfo {
-                image_type: ImageType::Dim2d,
-                format: Format::R8G8B8A8_SRGB,
-                extent,
-                usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-                ..Default::default()
-            },
-            AllocationCreateInfo::default(),
-        ).unwrap();
-
-        uploads
-            .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
-                upload_buffer,
-                image.clone(),
-            )).unwrap();
-
-        ImageView::new_default(image).unwrap()
+        load_png(png_bytes, &renderer, &mut uploads)
     };
 
     let sampler = Sampler::new(

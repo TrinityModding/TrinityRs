@@ -3,17 +3,24 @@ use std::fs;
 use std::mem::size_of;
 use std::path::PathBuf;
 use std::sync::Arc;
-
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::{DrawIndexedIndirectCommand};
 use vulkano::half::f16;
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, StandardMemoryAllocator};
-
-
 use crate::io::flatbuffers::trmbf_generated::titan::model::root_as_trmbf;
 use crate::io::flatbuffers::trmdl_generated::titan::model::root_as_trmdl;
 use crate::io::flatbuffers::trmsh_generated::titan::model::{PolygonType, root_as_trmsh, Type, VertexAttribute};
 use crate::io::flatbuffers::trmtr_generated::titan::model::root_as_trmtr;
+
+pub const RGBA8_UNORM: AttributeSize = AttributeSize::Rgba8UNorm(20, size_of::<u8>() * 4);
+pub const RGBA8_UNSIGNED: AttributeSize = AttributeSize::Rgba8Unsigned(22, size_of::<u8>() * 4);
+pub const R32_UINT: AttributeSize = AttributeSize::R32UInt(36, size_of::<u32>());
+pub const R32_INT: AttributeSize = AttributeSize::R32Int(37, size_of::<i32>());
+pub const RGBA16_UNORM: AttributeSize = AttributeSize::Rgba16UNorm(39, size_of::<u16>() * 4);
+pub const RGBA16_FLOAT: AttributeSize = AttributeSize::Rgba16Float(43, size_of::<f16>() * 4);
+pub const RG32_FLOAT: AttributeSize = AttributeSize::Rg32Float(48, size_of::<f32>() * 2);
+pub const RGB32_FLOAT: AttributeSize = AttributeSize::Rgb32Float(51, size_of::<f32>() * 3);
+pub const RGBA32_FLOAT: AttributeSize = AttributeSize::Rgba32Float(54, size_of::<f32>() * 4);
 
 /// Holds the sub-models inside of a model
 #[derive(Clone, Debug)]
@@ -205,15 +212,15 @@ impl AttributeSize {
     fn get(id: Type) -> Option<AttributeSize> {
         match id.0 {
             0 => Some(AttributeSize::None(0, 0)),
-            20 => Some(AttributeSize::Rgba8UNorm(20, size_of::<u8>() * 4)),
-            22 => Some(AttributeSize::Rgba8Unsigned(22, size_of::<u8>() * 4)),
-            36 => Some(AttributeSize::R32UInt(36, size_of::<u32>())),
-            37 => Some(AttributeSize::R32Int(37, size_of::<i32>())),
-            39 => Some(AttributeSize::Rgba16UNorm(39, size_of::<u16>() * 4)),
-            43 => Some(AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
-            48 => Some(AttributeSize::Rg32Float(48, size_of::<f32>() * 2)),
-            51 => Some(AttributeSize::Rgb32Float(51, size_of::<f32>() * 3)),
-            54 => Some(AttributeSize::Rgba32Float(54, size_of::<f32>() * 4)),
+            20 => Some(RGBA8_UNORM),
+            22 => Some(RGBA8_UNSIGNED),
+            36 => Some(R32_UINT),
+            37 => Some(R32_INT),
+            39 => Some(RGBA16_UNORM),
+            43 => Some(RGBA16_FLOAT),
+            48 => Some(RG32_FLOAT),
+            51 => Some(RGB32_FLOAT),
+            54 => Some(RGBA32_FLOAT),
             _ => None,
         }
     }
