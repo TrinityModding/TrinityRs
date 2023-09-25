@@ -157,7 +157,7 @@ impl IndexLayout {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AttributeType {
     None,
     Position,
@@ -187,7 +187,7 @@ impl AttributeType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum AttributeSize {
     None(i64, usize),
     Rgba8UNorm(i64, usize),
@@ -219,13 +219,20 @@ impl AttributeSize {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Attribute {
     pub type_: AttributeType,
     pub size: AttributeSize,
 }
 
 impl Attribute {
+    pub fn new(type_: AttributeType, size: AttributeSize) -> Attribute {
+        Attribute {
+            type_,
+            size,
+        }
+    }
+
     pub fn get_size(&self) -> u32 {
         match self.size {
             AttributeSize::None(_, s) => s as u32,

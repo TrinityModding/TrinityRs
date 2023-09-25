@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+use std::fmt::Debug;
 use std::io::Cursor;
+use std::mem::size_of;
 use std::ops::Add;
 use std::sync::{Arc, Mutex};
 use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3, Vec4};
@@ -11,6 +14,7 @@ use vulkano::descriptor_set::layout::DescriptorBindingFlags;
 use vulkano::device::Device;
 use vulkano::DeviceSize;
 use vulkano::format::Format;
+use vulkano::half::f16;
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo};
 use vulkano::image::view::ImageView;
@@ -27,6 +31,7 @@ use vulkano::pipeline::graphics::vertex_input::{VertexInputAttributeDescription,
 use vulkano::pipeline::graphics::viewport::{Viewport, ViewportState};
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
+use vulkano::shader::ShaderModule;
 use vulkano::swapchain::{Swapchain, SwapchainCreateInfo};
 use vulkano::sync::GpuFuture;
 use winit::{
@@ -37,17 +42,24 @@ use winit::event::{Event, VirtualKeyCode, WindowEvent};
 use winit::event::ElementState::{Pressed, Released};
 use winit::event_loop::ControlFlow;
 
-use crate::io::model::{Attribute, AttributeSize, IndexLayout, SubMesh, MeshGroup};
+use crate::io::model::{Attribute, AttributeSize, IndexLayout, SubMesh, MeshGroup, AttributeType};
 use crate::rendering::renderer::{Recorder, Renderer};
 
 mod rendering;
 mod io;
 
-mod vs {
+mod pokemon_pos3_nrm4_tng4_uv2_idx4_wgt4 {
     vulkano_shaders::shader! {
             ty: "vertex",
-            path: "shaders/vertex.glsl"
-            }
+            path: "shaders/pokemon_pos3_nrm4_tng4_uv2_idx4_wgt4.glsl"
+    }
+}
+
+mod pokemon_pos3_nrm4_tng4_uv2_col4_idx4_wgt4 {
+    vulkano_shaders::shader! {
+            ty: "vertex",
+            path: "shaders/pokemon_pos3_nrm4_tng4_uv2_col4_idx4_wgt4.glsl"
+    }
 }
 
 mod fs {
@@ -55,6 +67,209 @@ mod fs {
             ty: "fragment",
             path: "shaders/fragment.glsl"
             }
+}
+
+fn main() {
+    let event_loop = EventLoop::new();
+    let window = Arc::new(WindowBuilder::new()
+        .with_title("trinity-rs")
+        .build(&event_loop).unwrap());
+
+    // Renderer Setup
+    let info = Renderer::new(window.clone(), &event_loop);
+    let mut renderer = info.0;
+    let images = info.1;
+    let fbo = Arc::new(Mutex::new(WindowFrameBuffer::new(&mut renderer.viewport, renderer.allocator.clone(), images.as_slice())));
+
+    // Shader Setup
+    let mut shaders: HashMap<Vec<Attribute>, Arc<ShaderModule>> = HashMap::new();
+    shaders.entry(vec![
+        Attribute::new(AttributeType::Position, AttributeSize::Rgb32Float(51, size_of::<f32>() * 3)),
+        Attribute::new(AttributeType::Normal, AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
+        Attribute::new(AttributeType::Tangent, AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
+        Attribute::new(AttributeType::TextureCoords, AttributeSize::Rg32Float(48, size_of::<f32>() * 2)),
+        Attribute::new(AttributeType::BlendIndices, AttributeSize::Rgba8Unsigned(22, size_of::<u8>() * 4)),
+        Attribute::new(AttributeType::BlendWeights, AttributeSize::Rgba16UNorm(39, size_of::<u16>() * 4)),
+    ]).or_insert(pokemon_pos3_nrm4_tng4_uv2_idx4_wgt4::load(renderer.device.clone()).unwrap());
+
+    shaders.entry(vec![
+        Attribute::new(AttributeType::Position, AttributeSize::Rgb32Float(51, size_of::<f32>() * 3)),
+        Attribute::new(AttributeType::Normal, AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
+        Attribute::new(AttributeType::Tangent, AttributeSize::Rgba16Float(43, size_of::<f16>() * 4)),
+        Attribute::new(AttributeType::TextureCoords, AttributeSize::Rg32Float(48, size_of::<f32>() * 2)),
+        Attribute::new(AttributeType::Color, AttributeSize::Rgba8UNorm(20, size_of::<u8>() * 4)),
+        Attribute::new(AttributeType::BlendIndices, AttributeSize::Rgba8Unsigned(22, size_of::<u8>() * 4)),
+        Attribute::new(AttributeType::BlendWeights, AttributeSize::Rgba16UNorm(39, size_of::<u16>() * 4)),
+    ]).or_insert(pokemon_pos3_nrm4_tng4_uv2_col4_idx4_wgt4::load(renderer.device.clone()).unwrap());
+
+    // Graph/Scene Setup
+    let model = SubMesh::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm1018/pm1018_00_00/pm1018_00_00.trmdl"), renderer.allocator.clone());
+    let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
+    model_transform.lock().unwrap().append_translation(Vec3::new(0.0, -0.3, 0.0));
+
+    // TODO: clean this up
+    let mut uploads = AutoCommandBufferBuilder::primary(
+        &renderer.command_buffer_allocator,
+        renderer.queue.queue_family_index(),
+        CommandBufferUsage::OneTimeSubmit,
+    ).unwrap();
+
+    let mascot_texture = {
+        let png_bytes = include_bytes!("A:/PokemonScarlet/pokemon/data/pm1018/pm1018_00_00/pm1018_00_00_body_a_alb.png").to_vec();
+        let cursor = Cursor::new(png_bytes);
+        let decoder = png::Decoder::new(cursor);
+        let mut reader = decoder.read_info().unwrap();
+        let info = reader.info();
+        let extent = [info.width, info.height, 1];
+
+        let upload_buffer = Buffer::new_slice(
+            renderer.allocator.clone(),
+            BufferCreateInfo {
+                usage: BufferUsage::TRANSFER_SRC,
+                ..Default::default()
+            },
+            AllocationCreateInfo {
+                memory_type_filter: MemoryTypeFilter::PREFER_HOST
+                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                ..Default::default()
+            },
+            (info.width * info.height * 4) as DeviceSize,
+        ).unwrap();
+
+        reader.next_frame(&mut upload_buffer.write().unwrap()).unwrap();
+
+        let image = Image::new(
+            renderer.allocator.clone(),
+            ImageCreateInfo {
+                image_type: ImageType::Dim2d,
+                format: Format::R8G8B8A8_SRGB,
+                extent,
+                usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
+                ..Default::default()
+            },
+            AllocationCreateInfo::default(),
+        ).unwrap();
+
+        uploads
+            .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
+                upload_buffer,
+                image.clone(),
+            )).unwrap();
+
+        ImageView::new_default(image).unwrap()
+    };
+
+    let sampler = Sampler::new(
+        renderer.device.clone(),
+        SamplerCreateInfo {
+            mag_filter: Filter::Nearest,
+            min_filter: Filter::Nearest,
+            address_mode: [SamplerAddressMode::Repeat; 3],
+            ..Default::default()
+        },
+    ).unwrap();
+
+    renderer.previous_frame_end = Some(
+        uploads
+            .build().unwrap()
+            .execute(renderer.queue.clone()).unwrap()
+            .boxed(),
+    );
+
+    let camera = Arc::new(Mutex::new(Camera::new()));
+    let triangle_renderer = ModelRenderGraph::new(
+        &mut renderer,
+        shaders,
+        model.get("pm1018_00_00.trmsh").unwrap(),
+        camera.clone(),
+        fbo.clone(),
+        model_transform.clone(),
+        mascot_texture, sampler,
+    ); // load the non-lod mesh
+    renderer.add_recorder(triangle_renderer);
+
+    // Logic Setup
+    let mut move_forward = false;
+    let mut move_backward = false;
+    event_loop.run(move |event, _, control_flow| {
+        match event {
+            Event::WindowEvent {
+                event: WindowEvent::CloseRequested,
+                ..
+            } => {
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::WindowEvent {
+                event: WindowEvent::Resized(_),
+                ..
+            } => {
+                renderer.recreate_swapchain = true;
+            }
+            Event::WindowEvent {
+                event: WindowEvent::KeyboardInput {
+                    device_id: _device_id, input, is_synthetic: _is_synthetic
+                },
+                ..
+            } => {
+                if input.state == Pressed {
+                    match input.virtual_keycode {
+                        Some(VirtualKeyCode::W) => {
+                            move_forward = true;
+                            move_backward = false;
+                        }
+                        Some(VirtualKeyCode::S) => {
+                            move_forward = false;
+                            move_backward = true;
+                        }
+                        _ => {}
+                    }
+                }
+
+                if input.state == Released {
+                    match input.virtual_keycode {
+                        Some(VirtualKeyCode::W) => {
+                            move_forward = false;
+                        }
+                        Some(VirtualKeyCode::S) => {
+                            move_backward = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Event::RedrawEventsCleared => {
+                let image_extent: [u32; 2] = renderer.window.inner_size().into();
+                if image_extent.contains(&0) {
+                    return;
+                }
+                renderer.previous_frame_end.as_mut().unwrap().cleanup_finished();
+                if renderer.recreate_swapchain {
+                    let (new_swapchain, new_images) = renderer.swapchain
+                        .recreate(SwapchainCreateInfo {
+                            image_extent,
+                            ..renderer.swapchain.create_info()
+                        })
+                        .expect("failed to recreate swapchain");
+
+                    renderer.swapchain = new_swapchain;
+                    fbo.lock().unwrap().update(&mut renderer.viewport, renderer.allocator.clone(), new_images.as_slice());
+                    renderer.recreate_swapchain = false;
+                }
+                renderer.render();
+
+                model_transform.lock().unwrap().append_rotation(Rotor3::from_euler_angles(0.0, 0.0, 0.05));
+
+                let mut cam = camera.lock().unwrap();
+                if move_forward {
+                    cam.translate(0.0, 0.0, 0.01);
+                }
+                if move_backward {
+                    cam.translate(0.0, 0.0, -0.01);
+                }
+            }
+            _ => (),
+        }
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -150,243 +365,35 @@ impl WindowFrameBuffer {
     }
 }
 
-fn main() {
-    let event_loop = EventLoop::new();
-    let window = Arc::new(WindowBuilder::new()
-        .with_title("trinity-rs")
-        .build(&event_loop).unwrap());
-
-    // Renderer Setup
-    let info = Renderer::new(window.clone(), &event_loop);
-    let mut renderer = info.0;
-    let images = info.1;
-    let fbo = Arc::new(Mutex::new(WindowFrameBuffer::new(&mut renderer.viewport, renderer.allocator.clone(), images.as_slice())));
-
-    // Graph/Scene Setup
-    let model = SubMesh::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00.trmdl"), renderer.allocator.clone());
-    let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
-    model_transform.lock().unwrap().append_translation(Vec3::new(0.0, -0.3, 0.0));
-
-    // TODO: clean this up
-    let mut uploads = AutoCommandBufferBuilder::primary(
-        &renderer.command_buffer_allocator,
-        renderer.queue.queue_family_index(),
-        CommandBufferUsage::OneTimeSubmit,
-    ).unwrap();
-
-    let mascot_texture = {
-        let png_bytes = include_bytes!("A:/PokemonScarlet/pokemon/data/pm0855/pm0855_00_00/pm0855_00_00_body_alb.png").to_vec();
-        let cursor = Cursor::new(png_bytes);
-        let decoder = png::Decoder::new(cursor);
-        let mut reader = decoder.read_info().unwrap();
-        let info = reader.info();
-        let extent = [info.width, info.height, 1];
-
-        let upload_buffer = Buffer::new_slice(
-            renderer.allocator.clone(),
-            BufferCreateInfo {
-                usage: BufferUsage::TRANSFER_SRC,
-                ..Default::default()
-            },
-            AllocationCreateInfo {
-                memory_type_filter: MemoryTypeFilter::PREFER_HOST
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-            (info.width * info.height * 4) as DeviceSize,
-        ).unwrap();
-
-        reader.next_frame(&mut upload_buffer.write().unwrap()).unwrap();
-
-        let image = Image::new(
-            renderer.allocator.clone(),
-            ImageCreateInfo {
-                image_type: ImageType::Dim2d,
-                format: Format::R8G8B8A8_SRGB,
-                extent,
-                usage: ImageUsage::TRANSFER_DST | ImageUsage::SAMPLED,
-                ..Default::default()
-            },
-            AllocationCreateInfo::default(),
-        ).unwrap();
-
-        uploads
-            .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
-                upload_buffer,
-                image.clone(),
-            )).unwrap();
-
-        ImageView::new_default(image).unwrap()
-    };
-
-    let sampler = Sampler::new(
-        renderer.device.clone(),
-        SamplerCreateInfo {
-            mag_filter: Filter::Nearest,
-            min_filter: Filter::Nearest,
-            address_mode: [SamplerAddressMode::Repeat; 3],
-            ..Default::default()
-        },
-    ).unwrap();
-
-    renderer.previous_frame_end = Some(
-        uploads
-            .build().unwrap()
-            .execute(renderer.queue.clone()).unwrap()
-            .boxed(),
-    );
-
-    let camera = Arc::new(Mutex::new(Camera::new()));
-    let triangle_renderer = ModelRenderGraph::new(&mut renderer, model.get("pm0855_00_00_lod2.trmsh").unwrap(), camera.clone(), fbo.clone(), model_transform.clone(), mascot_texture, sampler); // load the non-lod mesh
-    renderer.add_recorder(triangle_renderer);
-
-    // Logic Setup
-    let mut move_forward = false;
-    let mut move_backward = false;
-    event_loop.run(move |event, _, control_flow| {
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                *control_flow = ControlFlow::Exit;
-            }
-            Event::WindowEvent {
-                event: WindowEvent::Resized(_),
-                ..
-            } => {
-                renderer.recreate_swapchain = true;
-            }
-            Event::WindowEvent {
-                event: WindowEvent::KeyboardInput {
-                    device_id: _device_id, input, is_synthetic: _is_synthetic
-                },
-                ..
-            } => {
-                if input.state == Pressed {
-                    match input.virtual_keycode {
-                        Some(VirtualKeyCode::W) => {
-                            move_forward = true;
-                            move_backward = false;
-                        }
-                        Some(VirtualKeyCode::S) => {
-                            move_forward = false;
-                            move_backward = true;
-                        }
-                        _ => {}
-                    }
-                }
-
-                if input.state == Released {
-                    match input.virtual_keycode {
-                        Some(VirtualKeyCode::W) => {
-                            move_forward = false;
-                        }
-                        Some(VirtualKeyCode::S) => {
-                            move_backward = false;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            Event::RedrawEventsCleared => {
-                let image_extent: [u32; 2] = renderer.window.inner_size().into();
-                if image_extent.contains(&0) {
-                    return;
-                }
-                renderer.previous_frame_end.as_mut().unwrap().cleanup_finished();
-                if renderer.recreate_swapchain {
-                    let (new_swapchain, new_images) = renderer.swapchain
-                        .recreate(SwapchainCreateInfo {
-                            image_extent,
-                            ..renderer.swapchain.create_info()
-                        })
-                        .expect("failed to recreate swapchain");
-
-                    renderer.swapchain = new_swapchain;
-                    fbo.lock().unwrap().update(&mut renderer.viewport, renderer.allocator.clone(), new_images.as_slice());
-                    renderer.recreate_swapchain = false;
-                }
-                renderer.render();
-
-                model_transform.lock().unwrap().append_rotation(Rotor3::from_euler_angles(0.0, 0.0, 0.05));
-
-                let mut cam = camera.lock().unwrap();
-                if move_forward {
-                    cam.translate(0.0, 0.0, 0.01);
-                }
-                if move_backward {
-                    cam.translate(0.0, 0.0, -0.01);
-                }
-            }
-            _ => (),
-        }
-    });
-}
-
 struct ModelRenderGraph {
     fbo: Arc<Mutex<WindowFrameBuffer>>,
     camera: Arc<Mutex<Camera>>,
-    pipeline: Arc<GraphicsPipeline>,
-    target_mesh: Vec<UploadedModel>,
-    model_transform: Arc<Mutex<Similarity3>>,
+    models: Vec<UploadedModel>,
     set: Arc<PersistentDescriptorSet>,
 }
 
 struct UploadedModel {
-    pub vertex_buffer: Subbuffer<[u8]>,
-    pub index_buffer: Subbuffer<[u8]>,
-    pub draw_calls: Vec<UploadedDraw>,
+    vertex_buffer: Subbuffer<[u8]>,
+    index_buffer: Subbuffer<[u8]>,
+    draw_calls: Vec<UploadedDraw>,
     index_layout: IndexLayout,
+    model_transform: Arc<Mutex<Similarity3>>,
 }
 
 struct UploadedDraw {
     indirect_call: Subbuffer<[DrawIndexedIndirectCommand]>,
-    // TODO: texture stuff (and optionally pipeline stuff) goes here
+    pipeline: Arc<GraphicsPipeline>,
 }
 
 impl ModelRenderGraph {
-    pub fn new(renderer: &mut Renderer, model: &Vec<Arc<MeshGroup>>, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>, tex: Arc<ImageView>, sampler: Arc<Sampler>) -> ModelRenderGraph {
-        let pipeline = {
-            let vs = vs::load(renderer.device.clone())
-                .unwrap()
-                .entry_point("main")
-                .unwrap();
-            let fs = fs::load(renderer.device.clone())
-                .unwrap()
-                .entry_point("main")
-                .unwrap();
+    pub fn new(renderer: &mut Renderer, shaders: HashMap<Vec<Attribute>, Arc<ShaderModule>>, model: &Vec<Arc<MeshGroup>>, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>, tex: Arc<ImageView>, sampler: Arc<Sampler>) -> ModelRenderGraph {
+        let mut pipeline_layout: Option<Arc<PipelineLayout>> = None;
+        let mut uploaded_models = Vec::new();
 
-            let stages = [
-                PipelineShaderStageCreateInfo::new(vs),
-                PipelineShaderStageCreateInfo::new(fs),
-            ];
-
-            let mut layout_create_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages);
-
-            // Adjust the info for set 0, binding 0 to make it variable with 2 descriptors.
-            let binding = layout_create_info.set_layouts[0]
-                .bindings
-                .get_mut(&0).unwrap();
-            binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
-            binding.descriptor_count = 1;
-
-            let layout = PipelineLayout::new(
-                renderer.device.clone(),
-                layout_create_info
-                    .into_pipeline_layout_create_info(renderer.device.clone())
-                    .unwrap(),
-            ).unwrap();
-
-            let subpass = PipelineRenderingCreateInfo {
-                color_attachment_formats: vec![Some(renderer.swapchain.image_format())],
-                depth_attachment_format: Some(Format::D16_UNORM),
-                ..Default::default()
-            };
-
+        for mesh in model {
             let mut vertex_attributes = Vec::new();
             let mut vertex_bindings = Vec::new();
-            let attribs = &model.get(0).unwrap().attributes;
+            let attribs = &mesh.attributes;
             let total_size = calculate_element_size(attribs);
             let mut offset = 0;
             for attr_idx in 0..attribs.len() {
@@ -410,68 +417,89 @@ impl ModelRenderGraph {
                     format: vk_type,
                     offset,
                 }));
-
                 vertex_bindings.push((0, VertexInputBindingDescription {
                     stride: total_size,
                     input_rate: VertexInputRate::Vertex,
                 }));
-
                 offset += size;
             }
 
-            let vertex_layout = VertexInputState::new()
-                .attributes(vertex_attributes)
-                .bindings(vertex_bindings);
+            let shader = shaders.get(attribs).unwrap_or_else(|| {
+                panic!("No Shader exists for the attributes {:?}", attribs);
+            });
 
-            GraphicsPipeline::new(
-                renderer.device.clone(),
-                None,
-                GraphicsPipelineCreateInfo {
-                    stages: stages.into_iter().collect(),
-                    vertex_input_state: Some(vertex_layout),
-                    input_assembly_state: Some(InputAssemblyState::default()),
-                    viewport_state: Some(ViewportState::viewport_dynamic_scissor_irrelevant()),
-                    rasterization_state: Some(RasterizationState::default().front_face(FrontFace::Clockwise)),
-                    depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
-                    multisample_state: Some(MultisampleState::default()),
-                    color_blend_state: Some(ColorBlendState::new(subpass.color_attachment_formats.len() as u32)),
-                    subpass: Some(subpass.into()),
-                    ..GraphicsPipelineCreateInfo::layout(layout)
+            let pipeline = {
+                let vs = shader
+                    .entry_point("main")
+                    .unwrap();
+                let fs = fs::load(renderer.device.clone())
+                    .unwrap()
+                    .entry_point("main")
+                    .unwrap();
+
+                let stages = [
+                    PipelineShaderStageCreateInfo::new(vs),
+                    PipelineShaderStageCreateInfo::new(fs),
+                ];
+
+                let mut layout_create_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages);
+
+                // Adjust the info for set 0, binding 0 to make it variable with 2 descriptors.
+                let binding = layout_create_info.set_layouts[0]
+                    .bindings
+                    .get_mut(&0).unwrap();
+                binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
+                binding.descriptor_count = 1;
+
+                let layout = PipelineLayout::new(
+                    renderer.device.clone(),
+                    layout_create_info
+                        .into_pipeline_layout_create_info(renderer.device.clone())
+                        .unwrap(),
+                ).unwrap();
+                pipeline_layout = Some(layout.clone());
+
+                let subpass = PipelineRenderingCreateInfo {
+                    color_attachment_formats: vec![Some(renderer.swapchain.image_format())],
+                    depth_attachment_format: Some(Format::D16_UNORM),
+                    ..Default::default()
+                };
+
+                let vertex_layout = VertexInputState::new()
+                    .attributes(vertex_attributes)
+                    .bindings(vertex_bindings);
+
+                GraphicsPipeline::new(
+                    renderer.device.clone(),
+                    None,
+                    GraphicsPipelineCreateInfo {
+                        stages: stages.into_iter().collect(),
+                        vertex_input_state: Some(vertex_layout),
+                        input_assembly_state: Some(InputAssemblyState::default()),
+                        viewport_state: Some(ViewportState::viewport_dynamic_scissor_irrelevant()),
+                        rasterization_state: Some(RasterizationState::default().front_face(FrontFace::Clockwise)),
+                        depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
+                        multisample_state: Some(MultisampleState::default()),
+                        color_blend_state: Some(ColorBlendState::new(subpass.color_attachment_formats.len() as u32)),
+                        subpass: Some(subpass.into()),
+                        ..GraphicsPipelineCreateInfo::layout(layout)
+                    },
+                ).unwrap()
+            };
+
+            let indirect_args_pool = SubbufferAllocator::new(
+                renderer.allocator.clone(),
+                SubbufferAllocatorCreateInfo {
+                    buffer_usage: BufferUsage::INDIRECT_BUFFER | BufferUsage::STORAGE_BUFFER,
+                    memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
+                        | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+                    ..Default::default()
                 },
-            ).unwrap()
-        };
+            );
 
-        let layout = pipeline.layout().set_layouts().get(0).unwrap();
-        let set = PersistentDescriptorSet::new_variable(
-            &renderer.descriptor_set_allocator,
-            layout.clone(),
-            1,
-            [WriteDescriptorSet::image_view_sampler_array(
-                0,
-                0,
-                [
-                    (tex as _, sampler.clone())
-                ],
-            )],
-            [],
-        ).unwrap();
-
-        let indirect_args_pool = SubbufferAllocator::new(
-            renderer.allocator.clone(),
-            SubbufferAllocatorCreateInfo {
-                buffer_usage: BufferUsage::INDIRECT_BUFFER | BufferUsage::STORAGE_BUFFER,
-                memory_type_filter: MemoryTypeFilter::PREFER_DEVICE
-                    | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                ..Default::default()
-            },
-        );
-
-        let mut uploaded_models = Vec::new();
-
-        for x in model {
             let mut draw_calls = Vec::new();
 
-            for sub_mesh in &x.sub_meshes {
+            for sub_mesh in &mesh.sub_meshes {
                 let indirect_calls = indirect_args_pool
                     .allocate_slice(sub_mesh.draw_calls.len() as _).unwrap();
                 indirect_calls
@@ -480,23 +508,39 @@ impl ModelRenderGraph {
 
                 draw_calls.push(UploadedDraw {
                     indirect_call: indirect_calls,
+                    pipeline: pipeline.clone(),
                 });
             }
 
             uploaded_models.push(UploadedModel {
-                vertex_buffer: x.vertex_buffer.clone(),
-                index_buffer: x.index_buffer.clone(),
-                index_layout: x.idx_layout.clone(),
+                vertex_buffer: mesh.vertex_buffer.clone(),
+                index_buffer: mesh.index_buffer.clone(),
+                index_layout: mesh.idx_layout.clone(),
                 draw_calls,
+                model_transform: model_transform.clone(),
             });
         }
 
+        let p_layout = pipeline_layout.unwrap();
+        let d_layout = p_layout.set_layouts().get(0).unwrap();
+        let set = PersistentDescriptorSet::new_variable(
+            &renderer.descriptor_set_allocator,
+            d_layout.clone(),
+            1,
+            [WriteDescriptorSet::image_view_sampler_array(
+                0,
+                0,
+                [
+                    (tex.clone() as _, sampler.clone())
+                ],
+            )],
+            [],
+        ).unwrap();
+
         ModelRenderGraph {
-            fbo,
-            camera,
-            pipeline,
-            target_mesh: uploaded_models,
-            model_transform,
+            fbo: fbo.clone(),
+            camera: camera.clone(),
+            models: uploaded_models,
             set,
         }
     }
@@ -553,36 +597,38 @@ impl Recorder for ModelRenderGraph {
         }
 
         let proj_matrix = perspective(90f32, viewport.extent[0] / viewport.extent[1], 0.1, 100.0);
-        let model_matrix: Mat4 = self.model_transform.lock().unwrap().into_homogeneous_matrix();
 
-        let push_constants = vs::PushConstantData {
-            projMat: proj_matrix.into(),
-            viewMat: self.camera.lock().unwrap().get_matrix().into(),
-            modelTransform: model_matrix.into(),
-        };
+        for model in &self.models {
+            let model_matrix: Mat4 = model.model_transform.lock().unwrap().into_homogeneous_matrix();
+            let push_constants = pokemon_pos3_nrm4_tng4_uv2_idx4_wgt4::PushConstantData {
+                projMat: proj_matrix.into(),
+                viewMat: self.camera.lock().unwrap().get_matrix().into(),
+                modelTransform: model_matrix.into(),
+            };
 
-        builder
-            .push_constants(self.pipeline.layout().clone(), 0, push_constants).unwrap()
-            .bind_pipeline_graphics(self.pipeline.clone()).unwrap()
-            .bind_descriptor_sets(
-                PipelineBindPoint::Graphics,
-                self.pipeline.layout().clone(),
-                0,
-                self.set.clone(),
-            ).unwrap();
-
-        for mesh in &self.target_mesh {
-            builder.bind_vertex_buffers(0, mesh.vertex_buffer.clone()).unwrap();
-            let src = mesh.index_buffer.clone();
-            match mesh.index_layout {
+            builder.bind_vertex_buffers(0, model.vertex_buffer.clone()).unwrap();
+            let src = model.index_buffer.clone();
+            match model.index_layout {
                 IndexLayout::UInt8(_) => builder.bind_index_buffer(src).unwrap(),
                 IndexLayout::UInt16(_) => builder.bind_index_buffer(IndexBuffer::U16(Subbuffer::reinterpret::<[u16]>(src))).unwrap(),
                 IndexLayout::UInt32(_) => builder.bind_index_buffer(IndexBuffer::U32(Subbuffer::reinterpret::<[u32]>(src))).unwrap(),
                 IndexLayout::UInt64(_) => panic!("64 bit index buffers not supported"),
             };
 
-            for indirect_draw in &mesh.draw_calls {
-                builder.draw_indexed_indirect(indirect_draw.indirect_call.to_owned()).unwrap();
+            let mut current_pipeline = None;
+            for draw_call in &model.draw_calls {
+                builder
+                    .push_constants(draw_call.pipeline.layout().clone(), 0, push_constants).unwrap()
+                    .bind_descriptor_sets(PipelineBindPoint::Graphics, draw_call.pipeline.layout().clone(), 0, self.set.clone()).unwrap();
+
+                // Bind Pipeline
+                let optional_pipeline = Some(draw_call.pipeline.clone());
+                if !current_pipeline.eq(&optional_pipeline) {
+                    builder.bind_pipeline_graphics(draw_call.pipeline.clone()).unwrap();
+                    current_pipeline = optional_pipeline;
+                }
+
+                builder.draw_indexed_indirect(draw_call.indirect_call.to_owned()).unwrap();
             }
         }
 
