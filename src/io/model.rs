@@ -10,7 +10,8 @@ use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter, Standar
 use crate::io::flatbuffers::trmbf_generated::titan::model::root_as_trmbf;
 use crate::io::flatbuffers::trmdl_generated::titan::model::root_as_trmdl;
 use crate::io::flatbuffers::trmsh_generated::titan::model::{PolygonType, root_as_trmsh, Type, VertexAttribute};
-use crate::io::flatbuffers::trmtr_generated::titan::model::root_as_trmtr;
+use crate::io::flatbuffers::trmtr_generated::titan::model::root_as_trmtr_unchecked;
+use crate::rendering::texture_manager::{PngTextureUploader, TextureManager};
 
 pub const RGBA8_UNORM: AttributeSize = AttributeSize::Rgba8UNorm(20, size_of::<u8>() * 4);
 pub const RGBA8_UNSIGNED: AttributeSize = AttributeSize::Rgba8Unsigned(22, size_of::<u8>() * 4);
@@ -34,24 +35,45 @@ pub struct MeshGroup {
 
 #[derive(Clone, Debug)]
 pub struct SubMesh {
-    pub draw_calls: Vec<DrawIndexedIndirectCommand>,
+    pub draw_calls: Vec<MaterialDrawCall>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MaterialDrawCall {
+    pub cmd: DrawIndexedIndirectCommand,
+    pub texture_idx: u32,
 }
 
 impl SubMesh {
-    pub fn from_trmdl(file_path: String, allocator: Arc<StandardMemoryAllocator>) -> HashMap<String, Vec<Arc<MeshGroup>>> {
+    pub fn from_trmdl(file_path: String, allocator: Arc<StandardMemoryAllocator>, texture_manager: &mut TextureManager) -> HashMap<String, Vec<Arc<MeshGroup>>> {
         let mut path = PathBuf::new();
         path.push(file_path);
         let file_bytes = fs::read(path.to_str().unwrap()).unwrap();
         let trmdl = root_as_trmdl(file_bytes.as_slice()).unwrap();
         path.pop();
 
-        path.push(trmdl.materials().unwrap().get(0));
-        let trmtr_bytes = fs::read(path.to_str().unwrap()).unwrap();
-        let _material = root_as_trmtr(trmtr_bytes.as_slice());
-        path.pop();
+        let trmtr_path = trmdl.materials().unwrap().get(0);
+        let trmtr_bytes = fs::read(path.join(trmtr_path).to_str().unwrap()).unwrap();
+        let material = unsafe { root_as_trmtr_unchecked(trmtr_bytes.as_slice()) };
+
+        // Map from material id to renderer's texture ID
+        let mut render_texture_id_map = HashMap::new();
+        for i in 0..material.materials().unwrap().len() {
+            let material = material.materials().unwrap().get(i);
+
+            for tex in material.textures().unwrap() {
+                if tex.texture_name().unwrap().eq("BaseColorMap") {
+                    println!("{}", path.join(String::from(tex.texture_file().unwrap()).replace(".bntx", ".png")).to_str().unwrap());
+                    let tex_bytes = fs::read(path.join(String::from(tex.texture_file().unwrap()).replace(".bntx", ".png")).to_str().unwrap()).unwrap();
+
+                    let renderer_id = texture_manager.queue(Box::new(PngTextureUploader::new(tex_bytes)));
+                    render_texture_id_map.entry(String::from(material.name().unwrap())).or_insert(renderer_id);
+                    break;
+                }
+            }
+        }
 
         let mut result_map: HashMap<String, Vec<Arc<MeshGroup>>> = HashMap::new();
-
         trmdl.meshes().unwrap().iter().for_each(|x| {
             let trmsh_path = x.filename().unwrap();
             let trmbf_path = String::from(trmsh_path).replace(".trmsh", ".trmbf");
@@ -83,13 +105,16 @@ impl SubMesh {
                 // draw calls for different materials
                 let mut draw_calls = Vec::new();
                 for material in info.materials().unwrap() {
-                    draw_calls.push(DrawIndexedIndirectCommand {
-                        index_count: material.poly_count(),
-                        instance_count: 1, // TODO: get info somehow on how many instances there are to control this instead of letting this control it
-                        first_index: material.poly_offset(),
-                        vertex_offset: 0,
-                        first_instance: 0,
-                    })
+                    draw_calls.push(MaterialDrawCall {
+                        cmd: DrawIndexedIndirectCommand {
+                            index_count: material.poly_count(),
+                            instance_count: 1, // TODO: get info somehow on how many instances there are to control this instead of letting this control it
+                            first_index: material.poly_offset(),
+                            vertex_offset: 0,
+                            first_instance: 0,
+                        },
+                        texture_idx: *render_texture_id_map.get(material.material_name().unwrap()).unwrap(),
+                    });
                 }
 
                 meshes.push(SubMesh {

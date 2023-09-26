@@ -38,7 +38,8 @@ use winit::event_loop::ControlFlow;
 
 use crate::io::model::{Attribute, IndexLayout, SubMesh, MeshGroup, AttributeType, RGB32_FLOAT, RGBA16_FLOAT, RG32_FLOAT, RGBA8_UNORM, RGBA8_UNSIGNED, RGBA16_UNORM};
 use crate::rendering::renderer::{Recorder, Renderer};
-use crate::rendering::renderer_utils::{create_vertex_layout, load_png};
+use crate::rendering::renderer_utils::create_vertex_layout;
+use crate::rendering::texture_manager::TextureManager;
 
 mod rendering;
 mod io;
@@ -61,7 +62,7 @@ mod fs {
     vulkano_shaders::shader! {
             ty: "fragment",
             path: "shaders/fragment.glsl"
-            }
+    }
 }
 
 fn main() {
@@ -75,6 +76,7 @@ fn main() {
     let mut renderer = info.0;
     let images = info.1;
     let fbo = Arc::new(Mutex::new(WindowFrameBuffer::new(&mut renderer.viewport, renderer.allocator.clone(), images.as_slice())));
+    let mut texture_manager = TextureManager::new();
 
     // Shader Setup
     let mut shaders: HashMap<Vec<Attribute>, Arc<ShaderModule>> = HashMap::new();
@@ -98,21 +100,17 @@ fn main() {
     ]).or_insert(pokemon_pos3_nrm4_tng4_uv2_col4_idx4_wgt4::load(renderer.device.clone()).unwrap());
 
     // Graph/Scene Setup
-    let model = SubMesh::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm1018/pm1018_00_00/pm1018_00_00.trmdl"), renderer.allocator.clone());
+    let model = SubMesh::from_trmdl(String::from("A:/PokemonScarlet/pokemon/data/pm1018/pm1018_00_00/pm1018_00_00.trmdl"), renderer.allocator.clone(), &mut texture_manager);
     let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
     model_transform.lock().unwrap().append_translation(Vec3::new(0.0, -0.8, 0.0));
 
-    // TODO: clean this up
     let mut uploads = AutoCommandBufferBuilder::primary(
         &renderer.command_buffer_allocator,
         renderer.queue.queue_family_index(),
         CommandBufferUsage::OneTimeSubmit,
     ).unwrap();
 
-    let mascot_texture = {
-        let png_bytes = include_bytes!("A:/PokemonScarlet/pokemon/data/pm1018/pm1018_00_00/pm1018_00_00_body_a_alb.png").to_vec();
-        load_png(png_bytes, &renderer, &mut uploads)
-    };
+    texture_manager.upload_all(&renderer, &mut uploads);
 
     let sampler = Sampler::new(
         renderer.device.clone(),
@@ -139,7 +137,7 @@ fn main() {
         camera.clone(),
         fbo.clone(),
         model_transform.clone(),
-        mascot_texture, sampler,
+        texture_manager, sampler,
     ); // load the non-lod mesh
     renderer.add_recorder(triangle_renderer);
 
@@ -338,10 +336,11 @@ struct UploadedModel {
 struct UploadedDraw {
     indirect_call: Subbuffer<[DrawIndexedIndirectCommand]>,
     pipeline: Arc<GraphicsPipeline>,
+    texture_id: u32,
 }
 
 impl ModelRenderGraph {
-    pub fn new(renderer: &mut Renderer, shaders: HashMap<Vec<Attribute>, Arc<ShaderModule>>, model: &Vec<Arc<MeshGroup>>, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>, tex: Arc<ImageView>, sampler: Arc<Sampler>) -> ModelRenderGraph {
+    pub fn new(renderer: &mut Renderer, shaders: HashMap<Vec<Attribute>, Arc<ShaderModule>>, model: &Vec<Arc<MeshGroup>>, camera: Arc<Mutex<Camera>>, fbo: Arc<Mutex<WindowFrameBuffer>>, model_transform: Arc<Mutex<Similarity3>>, texture_manager: TextureManager, sampler: Arc<Sampler>) -> ModelRenderGraph {
         let mut pipeline_layout: Option<Arc<PipelineLayout>> = None;
         let mut uploaded_models = Vec::new();
 
@@ -368,12 +367,11 @@ impl ModelRenderGraph {
 
                 let mut layout_create_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&stages);
 
-                // Adjust the info for set 0, binding 0 to make it variable with 2 descriptors.
                 let binding = layout_create_info.set_layouts[0]
                     .bindings
                     .get_mut(&0).unwrap();
                 binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
-                binding.descriptor_count = 1;
+                binding.descriptor_count = texture_manager.textures.len() as u32;
 
                 let layout = PipelineLayout::new(
                     renderer.device.clone(),
@@ -419,17 +417,23 @@ impl ModelRenderGraph {
 
             let mut draw_calls = Vec::new();
 
+            // FIXME: this is disgusting
             for sub_mesh in &mesh.sub_meshes {
-                let indirect_calls = indirect_args_pool
-                    .allocate_slice(sub_mesh.draw_calls.len() as _).unwrap();
-                indirect_calls
-                    .write().unwrap()
-                    .copy_from_slice(sub_mesh.draw_calls.as_slice());
+                for x in &sub_mesh.draw_calls {
+                    let cmds = vec![x.cmd];
 
-                draw_calls.push(UploadedDraw {
-                    indirect_call: indirect_calls,
-                    pipeline: pipeline.clone(),
-                });
+                    let indirect_calls = indirect_args_pool
+                        .allocate_slice(1).unwrap();
+                    indirect_calls
+                        .write().unwrap()
+                        .copy_from_slice(cmds.as_slice());
+
+                    draw_calls.push(UploadedDraw {
+                        indirect_call: indirect_calls,
+                        pipeline: pipeline.clone(),
+                        texture_id: x.texture_idx,
+                    });
+                }
             }
 
             uploaded_models.push(UploadedModel {
@@ -441,18 +445,21 @@ impl ModelRenderGraph {
             });
         }
 
+        let textures: Vec<(Arc<ImageView>, Arc<Sampler>)> = texture_manager.textures
+            .iter()
+            .map(|item| (Arc::clone(item), sampler.clone()))
+            .collect();
+
         let p_layout = pipeline_layout.unwrap();
         let d_layout = p_layout.set_layouts().get(0).unwrap();
         let set = PersistentDescriptorSet::new_variable(
             &renderer.descriptor_set_allocator,
             d_layout.clone(),
-            1,
+            texture_manager.textures.len() as u32,
             [WriteDescriptorSet::image_view_sampler_array(
                 0,
                 0,
-                [
-                    (tex.clone() as _, sampler.clone())
-                ],
+                textures,
             )],
             [],
         ).unwrap();
@@ -512,10 +519,11 @@ impl Recorder for ModelRenderGraph {
 
         for model in &self.models {
             let model_matrix: Mat4 = model.model_transform.lock().unwrap().into_homogeneous_matrix();
-            let push_constants = pokemon_pos3_nrm4_tng4_uv2_idx4_wgt4::PushConstantData {
+            let mut push_constants = pokemon_pos3_nrm4_tng4_uv2_idx4_wgt4::PushConstantData {
                 projMat: proj_matrix.into(),
                 viewMat: self.camera.lock().unwrap().get_matrix().into(),
                 modelTransform: model_matrix.into(),
+                textureId: 0,
             };
 
             builder.bind_vertex_buffers(0, model.vertex_buffer.clone()).unwrap();
@@ -530,7 +538,6 @@ impl Recorder for ModelRenderGraph {
             let mut current_pipeline = None;
             for draw_call in &model.draw_calls {
                 builder
-                    .push_constants(draw_call.pipeline.layout().clone(), 0, push_constants).unwrap()
                     .bind_descriptor_sets(PipelineBindPoint::Graphics, draw_call.pipeline.layout().clone(), 0, self.set.clone()).unwrap();
 
                 // Bind Pipeline
@@ -539,6 +546,9 @@ impl Recorder for ModelRenderGraph {
                     builder.bind_pipeline_graphics(draw_call.pipeline.clone()).unwrap();
                     current_pipeline = optional_pipeline;
                 }
+
+                push_constants.textureId = draw_call.texture_id as i32;
+                builder.push_constants(draw_call.pipeline.layout().clone(), 0, push_constants).unwrap();
 
                 builder.draw_indexed_indirect(draw_call.indirect_call.to_owned()).unwrap();
             }

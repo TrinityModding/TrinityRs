@@ -124,6 +124,7 @@ impl Renderer {
                     dynamic_rendering: true,
                     multi_draw_indirect: true,
                     descriptor_binding_variable_descriptor_count: true,
+                    runtime_descriptor_array: true,
                     ..Features::empty()
                 },
 
