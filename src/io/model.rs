@@ -23,129 +23,129 @@ pub const RG32_FLOAT: AttributeSize = AttributeSize::Rg32Float(48, size_of::<f32
 pub const RGB32_FLOAT: AttributeSize = AttributeSize::Rgb32Float(51, size_of::<f32>() * 3);
 pub const RGBA32_FLOAT: AttributeSize = AttributeSize::Rgba32Float(54, size_of::<f32>() * 4);
 
-pub fn from_trmdl(file_path: String, allocator: Arc<StandardMemoryAllocator>, texture_manager: &mut TextureManager {
-    let mut path = PathBuf::new();
-    path.push(file_path);
-    let file_bytes = fs::read(path.to_str().unwrap()).unwrap();
-    let trmdl = root_as_trmdl(file_bytes.as_slice()).unwrap();
-    path.pop();
-
-    let trmtr_path = trmdl.materials().unwrap().get(0);
-    let trmtr_bytes = fs::read(path.join(trmtr_path).to_str().unwrap()).unwrap();
-    let material = unsafe { root_as_trmtr_unchecked(trmtr_bytes.as_slice()) };
-
-    let mut model_to_renderer_id_map = HashMap::new();
-    for i in 0..material.materials().unwrap().len() {
-        let material = material.materials().unwrap().get(i);
-
-        for tex in material.textures().unwrap() {
-            if tex.texture_name().unwrap().eq("BaseColorMap") {
-                let tex_name = String::from(tex.texture_file().unwrap()).replace(".bntx", ".png");
-                let tex_bytes = fs::read(path.join(tex_name).to_str().unwrap()).unwrap();
-
-                let renderer_id = texture_manager.queue(Box::new(PngTextureUploader::new(tex_bytes)));
-                model_to_renderer_id_map.entry(String::from(material.name().unwrap())).or_insert(renderer_id);
-                break;
-            }
-        }
-    }
-
-    let mut result_map: HashMap<String, Vec<Arc<MeshGroup>>> = HashMap::new();
-    trmdl.meshes().unwrap().iter().for_each(|x| {
-        let trmsh_path = x.filename().unwrap();
-        let trmbf_path = String::from(trmsh_path).replace(".trmsh", ".trmbf");
-
-        let trmsh_bytes = fs::read(path.join(trmsh_path).to_str().unwrap()).unwrap();
-        let trmbf_bytes = fs::read(path.join(trmbf_path).to_str().unwrap()).unwrap();
-
-        let trmsh = root_as_trmsh(trmsh_bytes.as_slice()).unwrap();
-        let trmbf = root_as_trmbf(trmbf_bytes.as_slice()).unwrap();
-        let mut models = Vec::new();
-
-        println!("Mesh count: {}", trmsh.meshes().unwrap().len());
-
-        for mesh_idx in 0..trmsh.meshes().unwrap().len() {
-            let info = trmsh.meshes().unwrap().get(mesh_idx);
-            let data = trmbf.buffers().unwrap().get(mesh_idx);
-            let vertex_buffer = data.vertex_buffer().unwrap().get(0);
-            let idx_buffer = data.index_buffer().unwrap().get(0);
-            let idx_layout = IndexLayout::get(info.polygon_type()).unwrap();
-            let raw_attributes = info.attributes().unwrap().get(0);
-            // let mut meshes = Vec::new();
-
-            let mut attributes = Vec::new();
-            for attr in raw_attributes.attrs().unwrap() {
-                attributes.push(Attribute {
-                    type_: AttributeType::get(attr.attribute()).unwrap(),
-                    size: AttributeSize::get(attr.type_()).unwrap(),
-                });
-            }
-
-            // draw calls for different materials
-            let mut draw_calls = Vec::new();
-            for material in info.materials().unwrap() {
-                draw_calls.push(MaterialDrawCall {
-                    cmd: DrawIndexedIndirectCommand {
-                        index_count: material.poly_count(),
-                        instance_count: 1, // TODO: get info somehow on how many instances there are to control this instead of letting this control it
-                        first_index: material.poly_offset(),
-                        vertex_offset: 0,
-                        first_instance: 0,
-                    },
-                    texture_idx: *model_to_renderer_id_map.get(material.material_name().unwrap()).unwrap(),
-                });
-            }
-
-            // meshes.push(SubMesh {
-            //     draw_calls
-            // });
-            //
-            // let vertex_data = vertex_buffer.buffer().unwrap().bytes();
-            // let vertex_buffer = Buffer::new_slice(
-            //     allocator.clone(),
-            //     BufferCreateInfo {
-            //         usage: BufferUsage::VERTEX_BUFFER,
-            //         ..Default::default()
-            //     },
-            //     AllocationCreateInfo {
-            //         memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-            //         ..Default::default()
-            //     },
-            //     vertex_data.len() as u64,
-            // ).unwrap();
-            // vertex_buffer.write().unwrap().copy_from_slice(vertex_data);
-            //
-            // let index_data = idx_buffer.buffer().unwrap().bytes();
-            // let index_buffer = Buffer::new_slice(
-            //     allocator.clone(),
-            //     BufferCreateInfo {
-            //         usage: BufferUsage::INDEX_BUFFER,
-            //         ..Default::default()
-            //     },
-            //     AllocationCreateInfo {
-            //         memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-            //         ..Default::default()
-            //     },
-            //     index_data.len() as u64,
-            // ).unwrap();
-            // index_buffer.write().unwrap().copy_from_slice(index_data);
-            //
-            // models.push(Arc::new(MeshGroup {
-            //     sub_meshes: meshes,
-            //     vertex_buffer,
-            //     index_buffer,
-            //     idx_layout,
-            //     attributes,
-            // }));
-        }
-
-        result_map
-            .entry(String::from(x.filename().unwrap()))
-            .or_insert(models);
-    });
-
-    result_map
-}
+// pub fn from_trmdl(file_path: String, allocator: Arc<StandardMemoryAllocator>, texture_manager: &mut TextureManager {
+//     let mut path = PathBuf::new();
+//     path.push(file_path);
+//     let file_bytes = fs::read(path.to_str().unwrap()).unwrap();
+//     let trmdl = root_as_trmdl(file_bytes.as_slice()).unwrap();
+//     path.pop();
+//
+//     let trmtr_path = trmdl.materials().unwrap().get(0);
+//     let trmtr_bytes = fs::read(path.join(trmtr_path).to_str().unwrap()).unwrap();
+//     let material = unsafe { root_as_trmtr_unchecked(trmtr_bytes.as_slice()) };
+//
+//     let mut model_to_renderer_id_map = HashMap::new();
+//     for i in 0..material.materials().unwrap().len() {
+//         let material = material.materials().unwrap().get(i);
+//
+//         for tex in material.textures().unwrap() {
+//             if tex.texture_name().unwrap().eq("BaseColorMap") {
+//                 let tex_name = String::from(tex.texture_file().unwrap()).replace(".bntx", ".png");
+//                 let tex_bytes = fs::read(path.join(tex_name).to_str().unwrap()).unwrap();
+//
+//                 let renderer_id = texture_manager.queue(Box::new(PngTextureUploader::new(tex_bytes)));
+//                 model_to_renderer_id_map.entry(String::from(material.name().unwrap())).or_insert(renderer_id);
+//                 break;
+//             }
+//         }
+//     }
+//
+//     let mut result_map: HashMap<String, Vec<Arc<MeshGroup>>> = HashMap::new();
+//     trmdl.meshes().unwrap().iter().for_each(|x| {
+//         let trmsh_path = x.filename().unwrap();
+//         let trmbf_path = String::from(trmsh_path).replace(".trmsh", ".trmbf");
+//
+//         let trmsh_bytes = fs::read(path.join(trmsh_path).to_str().unwrap()).unwrap();
+//         let trmbf_bytes = fs::read(path.join(trmbf_path).to_str().unwrap()).unwrap();
+//
+//         let trmsh = root_as_trmsh(trmsh_bytes.as_slice()).unwrap();
+//         let trmbf = root_as_trmbf(trmbf_bytes.as_slice()).unwrap();
+//         let mut models = Vec::new();
+//
+//         println!("Mesh count: {}", trmsh.meshes().unwrap().len());
+//
+//         for mesh_idx in 0..trmsh.meshes().unwrap().len() {
+//             let info = trmsh.meshes().unwrap().get(mesh_idx);
+//             let data = trmbf.buffers().unwrap().get(mesh_idx);
+//             let vertex_buffer = data.vertex_buffer().unwrap().get(0);
+//             let idx_buffer = data.index_buffer().unwrap().get(0);
+//             let idx_layout = IndexLayout::get(info.polygon_type()).unwrap();
+//             let raw_attributes = info.attributes().unwrap().get(0);
+//             // let mut meshes = Vec::new();
+//
+//             let mut attributes = Vec::new();
+//             for attr in raw_attributes.attrs().unwrap() {
+//                 attributes.push(Attribute {
+//                     type_: AttributeType::get(attr.attribute()).unwrap(),
+//                     size: AttributeSize::get(attr.type_()).unwrap(),
+//                 });
+//             }
+//
+//             // draw calls for different materials
+//             let mut draw_calls = Vec::new();
+//             for material in info.materials().unwrap() {
+//                 draw_calls.push(MaterialDrawCall {
+//                     cmd: DrawIndexedIndirectCommand {
+//                         index_count: material.poly_count(),
+//                         instance_count: 1, // TODO: get info somehow on how many instances there are to control this instead of letting this control it
+//                         first_index: material.poly_offset(),
+//                         vertex_offset: 0,
+//                         first_instance: 0,
+//                     },
+//                     texture_idx: *model_to_renderer_id_map.get(material.material_name().unwrap()).unwrap(),
+//                 });
+//             }
+//
+//             // meshes.push(SubMesh {
+//             //     draw_calls
+//             // });
+//             //
+//             // let vertex_data = vertex_buffer.buffer().unwrap().bytes();
+//             // let vertex_buffer = Buffer::new_slice(
+//             //     allocator.clone(),
+//             //     BufferCreateInfo {
+//             //         usage: BufferUsage::VERTEX_BUFFER,
+//             //         ..Default::default()
+//             //     },
+//             //     AllocationCreateInfo {
+//             //         memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+//             //         ..Default::default()
+//             //     },
+//             //     vertex_data.len() as u64,
+//             // ).unwrap();
+//             // vertex_buffer.write().unwrap().copy_from_slice(vertex_data);
+//             //
+//             // let index_data = idx_buffer.buffer().unwrap().bytes();
+//             // let index_buffer = Buffer::new_slice(
+//             //     allocator.clone(),
+//             //     BufferCreateInfo {
+//             //         usage: BufferUsage::INDEX_BUFFER,
+//             //         ..Default::default()
+//             //     },
+//             //     AllocationCreateInfo {
+//             //         memory_type_filter: MemoryTypeFilter::PREFER_DEVICE | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
+//             //         ..Default::default()
+//             //     },
+//             //     index_data.len() as u64,
+//             // ).unwrap();
+//             // index_buffer.write().unwrap().copy_from_slice(index_data);
+//             //
+//             // models.push(Arc::new(MeshGroup {
+//             //     sub_meshes: meshes,
+//             //     vertex_buffer,
+//             //     index_buffer,
+//             //     idx_layout,
+//             //     attributes,
+//             // }));
+//         }
+//
+//         result_map
+//             .entry(String::from(x.filename().unwrap()))
+//             .or_insert(models);
+//     });
+//
+//     result_map
+// }
 
 
 #[derive(Clone, Debug)]
