@@ -9,8 +9,10 @@ use vulkano::{command_buffer::allocator::StandardCommandBufferAllocator, device:
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::device::Queue;
-use vulkano::image::Image;
-use vulkano::memory::allocator::StandardMemoryAllocator;
+use vulkano::format::Format;
+use vulkano::image::{Image, ImageCreateInfo, ImageType};
+use vulkano::image::view::ImageView;
+use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, StandardMemoryAllocator};
 use vulkano::swapchain::{acquire_next_image, SwapchainPresentInfo};
 use winit::event_loop::EventLoop;
 use winit::window::Window;
@@ -30,11 +32,12 @@ pub struct Renderer {
     pub command_buffer_recorders: Vec<Box<dyn Recorder>>,
     pub recreate_swapchain: bool,
     pub previous_frame_end: Option<Box<dyn GpuFuture>>,
-    pub command_buffer_allocator: StandardCommandBufferAllocator,
+    pub command_buffer_allocator: Arc<StandardCommandBufferAllocator>,
     pub descriptor_set_allocator: StandardDescriptorSetAllocator,
     pub swapchain: Arc<Swapchain>,
     pub window: Arc<Window>,
-    pub queue: Arc<Queue>,
+    pub graphics_queue: Arc<Queue>,
+    pub transfer_queue: Arc<Queue>,
     pub device: Arc<Device>,
     pub viewport: Viewport,
     pub allocator: Arc<StandardMemoryAllocator>,
@@ -68,7 +71,7 @@ impl Renderer {
             ..DeviceExtensions::empty()
         };
 
-        let (physical_device, queue_family_index) = instance
+        let (physical_device, graphics_family_index) = instance
             .enumerate_physical_devices()
             .unwrap()
             .filter(|p| {
@@ -110,30 +113,52 @@ impl Renderer {
             device_extensions.khr_dynamic_rendering = true;
         }
 
-        let (device, mut queues) = Device::new(
-            physical_device,
-            DeviceCreateInfo {
-                queue_create_infos: vec![QueueCreateInfo {
-                    queue_family_index,
-                    ..Default::default()
-                }],
+        let transfer_family_index = physical_device
+            .queue_family_properties()
+            .iter()
+            .enumerate()
+            .filter(|(_, q)| {
+                q.queue_flags.intersects(QueueFlags::TRANSFER)
+            })
+            .min_by_key(|(_, q)| q.queue_flags.count())
+            .unwrap()
+            .0 as u32;
 
-                enabled_extensions: device_extensions,
-
-                enabled_features: Features {
-                    dynamic_rendering: true,
-                    multi_draw_indirect: true,
-                    descriptor_binding_variable_descriptor_count: true,
-                    runtime_descriptor_array: true,
-                    ..Features::empty()
-                },
-
+        let (device, mut queues) = {
+            let mut queue_create_infos = vec![QueueCreateInfo {
+                queue_family_index: graphics_family_index,
                 ..Default::default()
-            },
-        )
-            .unwrap();
+            }];
 
-        let queue = queues.next().unwrap();
+            if transfer_family_index != graphics_family_index {
+                queue_create_infos.push(QueueCreateInfo {
+                    queue_family_index: transfer_family_index,
+                    ..Default::default()
+                });
+            }
+
+            Device::new(
+                physical_device,
+                DeviceCreateInfo {
+                    queue_create_infos,
+                    enabled_extensions: device_extensions,
+
+                    enabled_features: Features {
+                        dynamic_rendering: true,
+                        multi_draw_indirect: true,
+                        descriptor_binding_variable_descriptor_count: true,
+                        runtime_descriptor_array: true,
+                        ..Features::empty()
+                    },
+
+                    ..Default::default()
+                },
+            ).unwrap()
+        };
+
+        let graphics_queue = queues.next().unwrap();
+        // If we didn't get a dedicated transfer queue, fall back to the graphics queue for transfers.
+        let transfer_queue = queues.next().unwrap_or_else(|| graphics_queue.clone());
 
         let (swapchain, images) = {
             let surface_capabilities = device
@@ -177,10 +202,11 @@ impl Renderer {
             command_buffer_recorders: vec!(),
             swapchain,
             window,
-            queue,
+            graphics_queue,
+            transfer_queue,
             recreate_swapchain: false,
             previous_frame_end: Some(sync::now(device.clone()).boxed()),
-            command_buffer_allocator: StandardCommandBufferAllocator::new(device.clone(), Default::default()),
+            command_buffer_allocator: Arc::new(StandardCommandBufferAllocator::new(device.clone(), Default::default())),
             descriptor_set_allocator: StandardDescriptorSetAllocator::new(device.clone()),
             device: device.clone(),
             viewport,
@@ -196,7 +222,7 @@ impl Renderer {
                     self.recreate_swapchain = true;
                     return;
                 }
-                Err(e) => panic!("failed to acquire next image: {e}"),
+                Err(_e) => panic!("failed to acquire next image: {_e}"),
             };
 
         if suboptimal {
@@ -205,7 +231,7 @@ impl Renderer {
 
         let mut builder = AutoCommandBufferBuilder::primary(
             &self.command_buffer_allocator,
-            self.queue.queue_family_index(),
+            self.graphics_queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
 
@@ -220,10 +246,10 @@ impl Renderer {
             .take()
             .unwrap()
             .join(acquire_future)
-            .then_execute(self.queue.clone(), command_buffer)
+            .then_execute(self.graphics_queue.clone(), command_buffer)
             .unwrap()
             .then_swapchain_present(
-                self.queue.clone(),
+                self.graphics_queue.clone(),
                 SwapchainPresentInfo::swapchain_image_index(self.swapchain.clone(), image_index),
             )
             .then_signal_fence_and_flush();
@@ -236,8 +262,8 @@ impl Renderer {
                 self.recreate_swapchain = true;
                 self.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
             }
-            Err(e) => {
-                println!("failed to flush render_future: {e}");
+            Err(_e) => {
+                println!("failed to flush render_future: {_e}");
                 self.previous_frame_end = Some(sync::now(self.device.clone()).boxed());
             }
         }
@@ -246,4 +272,64 @@ impl Renderer {
 
 fn supports_dynamic_rendering(p: &PhysicalDevice) -> bool {
     p.api_version() >= Version::V1_3 || p.supported_extensions().khr_dynamic_rendering
+}
+
+pub struct WindowFrameBuffer {
+    pub swapchain_image_views: Vec<Arc<ImageView>>,
+    pub depth_image_view: Arc<ImageView>,
+}
+
+impl WindowFrameBuffer {
+    pub fn new(viewport: &mut Viewport, memory_allocator: Arc<dyn MemoryAllocator>, images: &[Arc<Image>]) -> WindowFrameBuffer {
+        let extent = images[0].extent();
+        viewport.extent = [extent[0] as f32, extent[1] as f32];
+
+        let depth_image_view = ImageView::new_default(
+            Image::new(
+                memory_allocator,
+                ImageCreateInfo {
+                    image_type: ImageType::Dim2d,
+                    format: Format::D16_UNORM,
+                    extent: images[0].extent(),
+                    usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                    ..Default::default()
+                },
+                AllocationCreateInfo::default(),
+            ).unwrap(),
+        ).unwrap();
+
+        let swapchain_image_views = images
+            .iter()
+            .map(|image| ImageView::new_default(image.clone()).unwrap())
+            .collect::<Vec<_>>();
+
+        WindowFrameBuffer {
+            swapchain_image_views,
+            depth_image_view,
+        }
+    }
+
+    pub fn update(&mut self, viewport: &mut Viewport, memory_allocator: Arc<dyn MemoryAllocator>, images: &[Arc<Image>]) {
+        let extent = images[0].extent();
+        viewport.extent = [extent[0] as f32, extent[1] as f32];
+
+        self.depth_image_view = ImageView::new_default(
+            Image::new(
+                memory_allocator,
+                ImageCreateInfo {
+                    image_type: ImageType::Dim2d,
+                    format: Format::D16_UNORM,
+                    extent: images[0].extent(),
+                    usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::TRANSIENT_ATTACHMENT,
+                    ..Default::default()
+                },
+                AllocationCreateInfo::default(),
+            ).unwrap(),
+        ).unwrap();
+
+        self.swapchain_image_views = images
+            .iter()
+            .map(|image| ImageView::new_default(image.clone()).unwrap())
+            .collect::<Vec<_>>()
+    }
 }

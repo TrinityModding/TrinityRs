@@ -1,3 +1,4 @@
+use std::mem::size_of;
 use std::sync::Arc;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics::vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState};
@@ -10,28 +11,29 @@ use vulkano::pipeline::graphics::multisample::MultisampleState;
 use vulkano::pipeline::graphics::rasterization::{FrontFace, RasterizationState};
 use vulkano::pipeline::graphics::subpass::PipelineRenderingCreateInfo;
 use vulkano::pipeline::graphics::viewport::ViewportState;
-use vulkano::shader::EntryPoint;
 use crate::rendering::renderer::Renderer;
 
 pub struct VertexAttributeInfo {
-    binding: u32,
-    format: Format,
+    pub(crate) binding: u32,
+    pub(crate) format: Format,
 }
 
 impl VertexAttributeInfo {
     pub fn get_attribute_size(&self) -> u32 {
         match self.format {
+            Format::R32G32B32_SFLOAT => size_of::<f32>() as u32 * 3,
+            Format::R32G32_SFLOAT => size_of::<f32>() as u32 * 2,
             _ => panic!("Unimplemented vertex attribute format {:?}", self.format)
         }
     }
 }
 
 pub struct PipelineCreationInfo {
-    attributes: Vec<VertexAttributeInfo>,
+    pub(crate) attributes: Vec<VertexAttributeInfo>,
 }
 
 impl PipelineCreationInfo {
-    pub fn create(&self, renderer: &Renderer, stages: [PipelineShaderStageCreateInfo; 2], layout: Arc<PipelineLayout>, vs: EntryPoint, fs: EntryPoint) -> Arc<GraphicsPipeline> {
+    pub fn create(&self, renderer: &Renderer, stages: [PipelineShaderStageCreateInfo; 2], layout: Arc<PipelineLayout>) -> Arc<GraphicsPipeline> {
         let element_size: u32 = self.attributes.iter().map(|x| x.get_attribute_size()).sum();
         let mut vertex_attributes = Vec::new();
         let mut vertex_bindings = Vec::new();
@@ -41,11 +43,11 @@ impl PipelineCreationInfo {
             let size = attribute.get_attribute_size();
 
             vertex_attributes.push((i as u32, VertexInputAttributeDescription {
-                binding: 0,
+                binding: attribute.binding,
                 format: attribute.format,
                 offset,
             }));
-            vertex_bindings.push((0, VertexInputBindingDescription {
+            vertex_bindings.push((attribute.binding, VertexInputBindingDescription {
                 stride: element_size,
                 input_rate: VertexInputRate::Vertex,
             }));
