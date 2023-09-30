@@ -15,7 +15,6 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryAutoCommandBuffer,
     PrimaryCommandBufferAbstract, RenderingAttachmentInfo, RenderingInfo,
 };
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::{Device, Queue};
 use vulkano::memory::allocator::suballocator::Region;
 use vulkano::memory::allocator::{
@@ -56,6 +55,7 @@ pub struct PushConstants {
 }
 
 impl Recorder for SceneGraph {
+    #[allow(unused_variables)]
     fn record(
         &self,
         builder: &mut AutoCommandBufferBuilder<
@@ -164,22 +164,12 @@ impl SceneGraph {
             renderer.command_buffer_allocator.clone(),
         );
 
-        let d_layout = layout.set_layouts().get(0).unwrap();
-        let set = PersistentDescriptorSet::new_variable(
-            &renderer.descriptor_set_allocator,
-            d_layout.clone(),
-            5,
-            [WriteDescriptorSet::image_view_sampler_array(0, 0, [])],
-            [],
-        )
-        .unwrap();
-
         SceneGraph {
-            pipeline_layout: layout,
+            pipeline_layout: layout.clone(),
             fbo: window_framebuffer,
             allocator: renderer.allocator.clone(),
             shader_map: HashMap::new(),
-            texture_manager: TextureManager::new(),
+            texture_manager: TextureManager::new(layout, renderer.descriptor_set_allocator.clone(), renderer.device.clone()),
             buffers: HashMap::new(),
         }
     }
@@ -460,25 +450,25 @@ impl BufferStorage {
         BufferStorage {
             pos_vertex_buffer: ManagedBuffer::new(
                 allocator.clone(),
-                BufferUsage::VERTEX_BUFFER,
+                BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST,
                 POS_ATTRIB_VERTEX_BUFFER_INITIAL_SIZE,
                 device.clone(),
             ),
             color_vertex_buffer: ManagedBuffer::new(
                 allocator.clone(),
-                BufferUsage::VERTEX_BUFFER,
+                BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST,
                 COLOR_ATTRIBS_VERTEX_BUFFER_INITIAL_SIZE,
                 device.clone(),
             ),
             index_buffer: ManagedBuffer::new(
                 allocator.clone(),
-                BufferUsage::INDEX_BUFFER,
+                BufferUsage::INDEX_BUFFER | BufferUsage::TRANSFER_DST,
                 INDEX_BUFFER_INITIAL_SIZE,
                 device.clone(),
             ),
             instance_buffer: ManagedBuffer::new(
                 allocator.clone(),
-                BufferUsage::STORAGE_BUFFER,
+                BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
                 INSTANCE_INFO_BUFFER_INITIAL_SIZE,
                 device.clone(),
             ),

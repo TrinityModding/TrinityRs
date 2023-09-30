@@ -9,11 +9,16 @@ use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CopyBufferToImageInfo, PrimaryAutoCommandBuffer,
 };
+use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
+use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
+use vulkano::device::Device;
 use vulkano::format::Format;
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter};
 use vulkano::DeviceSize;
+use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo};
+use vulkano::pipeline::PipelineLayout;
 
 pub trait TextureUploader {
     fn get_width(&self) -> u32;
@@ -62,18 +67,56 @@ impl TextureUploader for PngTextureUploader {
 }
 
 pub struct TextureManager {
+    sampler: Arc<Sampler>,
+    layout: Arc<PipelineLayout>,
+    allocator: Arc<StandardDescriptorSetAllocator>,
+    pub set: Option<Arc<PersistentDescriptorSet>>,
     next_texture_id: u32,
     textures_to_upload: Vec<Rc<Mutex<Box<dyn TextureUploader>>>>,
-    pub textures: Vec<Arc<ImageView>>,
+    textures: Vec<Arc<ImageView>>,
 }
 
 impl TextureManager {
-    pub fn new() -> TextureManager {
+    pub fn new(layout: Arc<PipelineLayout>, allocator: Arc<StandardDescriptorSetAllocator>, device: Arc<Device>) -> TextureManager {
+        let sampler = Sampler::new(
+            device,
+            SamplerCreateInfo {
+                mag_filter: Filter::Nearest,
+                min_filter: Filter::Nearest,
+                address_mode: [SamplerAddressMode::Repeat; 3],
+                ..Default::default()
+            },
+        ).unwrap();
+
         TextureManager {
+            sampler,
+            layout,
+            allocator,
+            set: None,
             next_texture_id: 0,
             textures_to_upload: Vec::new(),
             textures: Vec::new(),
         }
+    }
+
+    fn generate_descriptor_set(&self) -> Arc<PersistentDescriptorSet> {
+        let textures: Vec<(Arc<ImageView>, Arc<Sampler>)> = self.textures
+            .iter()
+            .map(|item| (Arc::clone(item), self.sampler.clone()))
+            .collect();
+
+        let d_layout = self.layout.set_layouts().get(0).unwrap();
+        PersistentDescriptorSet::new_variable(
+            &self.allocator,
+            d_layout.clone(),
+            self.textures.len() as u32,
+            [WriteDescriptorSet::image_view_sampler_array(
+                0,
+                0,
+                textures,
+            )],
+            [],
+        ).unwrap()
     }
 
     pub fn queue(&mut self, texture_uploader: Box<dyn TextureUploader>) -> u32 {

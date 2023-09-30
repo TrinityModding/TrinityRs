@@ -2,10 +2,11 @@ use crate::io::model::from_trmdl;
 use crate::rendering::graph::SceneGraph;
 use crate::rendering::pipeline::{PipelineCreationInfo, VertexAttributeInfo};
 use std::fmt::Debug;
+use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::ops::Add;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3};
@@ -25,6 +26,7 @@ use winit::event_loop::ControlFlow;
 use winit::{event_loop::EventLoop, window::WindowBuilder};
 
 use crate::rendering::renderer::{Renderer, WindowFrameBuffer};
+use crate::rendering::texture_manager::PngTextureUploader;
 
 mod io;
 mod rendering;
@@ -127,6 +129,7 @@ fn main() {
     )
     .unwrap();
 
+    graph.texture_manager.queue(Box::new(PngTextureUploader::new(fs::read(PathBuf::from("C:/Users/Hayden/Desktop/fallback.png")).unwrap())));
     graph.texture_manager.upload_all(&renderer, &mut uploads);
 
     let _sampler = Sampler::new(
