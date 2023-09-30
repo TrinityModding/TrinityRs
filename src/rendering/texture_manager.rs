@@ -1,16 +1,19 @@
+use crate::rendering::renderer::Renderer;
+use png::Reader;
 use std::cell::RefCell;
 use std::io::Cursor;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use png::Reader;
 use vulkano::buffer::{Buffer, BufferCreateInfo, BufferUsage, Subbuffer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CopyBufferToImageInfo, PrimaryAutoCommandBuffer};
-use vulkano::DeviceSize;
+use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, CopyBufferToImageInfo, PrimaryAutoCommandBuffer,
+};
 use vulkano::format::Format;
-use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::image::view::ImageView;
+use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter};
-use crate::rendering::renderer::Renderer;
+use vulkano::DeviceSize;
 
 pub trait TextureUploader {
     fn get_width(&self) -> u32;
@@ -36,7 +39,7 @@ impl PngTextureUploader {
         PngTextureUploader {
             reader,
             width: info.width,
-            height: info.height
+            height: info.height,
         }
     }
 }
@@ -51,7 +54,10 @@ impl TextureUploader for PngTextureUploader {
     }
 
     fn upload(&mut self, buffer: &Subbuffer<[u8]>) {
-        self.reader.borrow_mut().next_frame(&mut buffer.write().unwrap()).unwrap();
+        self.reader
+            .borrow_mut()
+            .next_frame(&mut buffer.write().unwrap())
+            .unwrap();
     }
 }
 
@@ -66,17 +72,25 @@ impl TextureManager {
         TextureManager {
             next_texture_id: 0,
             textures_to_upload: Vec::new(),
-            textures: Vec::new()
+            textures: Vec::new(),
         }
     }
 
     pub fn queue(&mut self, texture_uploader: Box<dyn TextureUploader>) -> u32 {
-        self.textures_to_upload.push(Rc::new(Mutex::new(texture_uploader)));
+        self.textures_to_upload
+            .push(Rc::new(Mutex::new(texture_uploader)));
         self.next_texture_id += 1;
         return self.next_texture_id - 1;
     }
 
-    pub fn upload_all(&mut self, renderer: &Renderer, uploads: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>) {
+    pub fn upload_all(
+        &mut self,
+        renderer: &Renderer,
+        uploads: &mut AutoCommandBufferBuilder<
+            PrimaryAutoCommandBuffer<Arc<StandardCommandBufferAllocator>>,
+            Arc<StandardCommandBufferAllocator>,
+        >,
+    ) {
         for x in &self.textures_to_upload {
             let mut guard = x.lock().unwrap();
 
@@ -94,7 +108,8 @@ impl TextureManager {
                     ..Default::default()
                 },
                 (guard.get_width() * guard.get_height() * 4) as DeviceSize,
-            ).unwrap();
+            )
+            .unwrap();
 
             guard.upload(&upload_buffer);
 
@@ -108,13 +123,15 @@ impl TextureManager {
                     ..Default::default()
                 },
                 AllocationCreateInfo::default(),
-            ).unwrap();
+            )
+            .unwrap();
 
             uploads
                 .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(
                     upload_buffer,
                     image.clone(),
-                )).unwrap();
+                ))
+                .unwrap();
 
             self.textures.push(ImageView::new_default(image).unwrap());
         }

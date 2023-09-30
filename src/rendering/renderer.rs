@@ -1,26 +1,38 @@
 use std::sync::Arc;
 
-use vulkano::{command_buffer::allocator::StandardCommandBufferAllocator, device::{
-    Device, DeviceCreateInfo, DeviceExtensions, Features, physical::PhysicalDevice, physical::PhysicalDeviceType,
-    QueueCreateInfo, QueueFlags,
-}, image::{ImageUsage}, instance::{Instance, InstanceCreateFlags, InstanceCreateInfo}, pipeline::graphics::viewport::Viewport, swapchain::{
-    Surface, Swapchain, SwapchainCreateInfo,
-}, sync::{self, GpuFuture}, Validated, Version, VulkanError, VulkanLibrary};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
+};
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::device::Queue;
 use vulkano::format::Format;
-use vulkano::image::{Image, ImageCreateInfo, ImageType};
 use vulkano::image::view::ImageView;
+use vulkano::image::{Image, ImageCreateInfo, ImageType};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryAllocator, StandardMemoryAllocator};
 use vulkano::swapchain::{acquire_next_image, SwapchainPresentInfo};
+use vulkano::{
+    command_buffer::allocator::StandardCommandBufferAllocator,
+    device::{
+        physical::PhysicalDevice, physical::PhysicalDeviceType, Device, DeviceCreateInfo,
+        DeviceExtensions, Features, QueueCreateInfo, QueueFlags,
+    },
+    image::ImageUsage,
+    instance::{Instance, InstanceCreateFlags, InstanceCreateInfo},
+    pipeline::graphics::viewport::Viewport,
+    swapchain::{Surface, Swapchain, SwapchainCreateInfo},
+    sync::{self, GpuFuture},
+    Validated, Version, VulkanError, VulkanLibrary,
+};
 use winit::event_loop::EventLoop;
 use winit::window::Window;
 
 pub trait Recorder {
     fn record(
         &self,
-        builder: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+        builder: &mut AutoCommandBufferBuilder<
+            PrimaryAutoCommandBuffer<Arc<StandardCommandBufferAllocator>>,
+            Arc<StandardCommandBufferAllocator>,
+        >,
         device: Arc<Device>,
         swapchain: Arc<Swapchain>,
         viewport: Viewport,
@@ -44,7 +56,10 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn add_recorder<P>(&mut self, predicate: P) where P: Recorder + 'static, {
+    pub fn add_recorder<P>(&mut self, predicate: P)
+    where
+        P: Recorder + 'static,
+    {
         self.command_buffer_recorders.push(Box::new(predicate));
     }
 
@@ -62,7 +77,8 @@ impl Renderer {
                 enabled_layers,
                 ..Default::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         let surface = Surface::from_window(instance.clone(), window.clone()).unwrap();
 
@@ -74,12 +90,8 @@ impl Renderer {
         let (physical_device, graphics_family_index) = instance
             .enumerate_physical_devices()
             .unwrap()
-            .filter(|p| {
-                supports_dynamic_rendering(p.as_ref())
-            })
-            .filter(|p| {
-                p.supported_extensions().contains(&device_extensions)
-            })
+            .filter(|p| supports_dynamic_rendering(p.as_ref()))
+            .filter(|p| p.supported_extensions().contains(&device_extensions))
             .filter_map(|p| {
                 p.queue_family_properties()
                     .iter()
@@ -88,18 +100,15 @@ impl Renderer {
                         q.queue_flags.intersects(QueueFlags::GRAPHICS)
                             && p.surface_support(i as u32, &surface).unwrap_or(false)
                     })
-
                     .map(|i| (p, i as u32))
             })
-            .min_by_key(|(p, _)| {
-                match p.properties().device_type {
-                    PhysicalDeviceType::DiscreteGpu => 0,
-                    PhysicalDeviceType::IntegratedGpu => 1,
-                    PhysicalDeviceType::VirtualGpu => 2,
-                    PhysicalDeviceType::Cpu => 3,
-                    PhysicalDeviceType::Other => 4,
-                    _ => 5,
-                }
+            .min_by_key(|(p, _)| match p.properties().device_type {
+                PhysicalDeviceType::DiscreteGpu => 0,
+                PhysicalDeviceType::IntegratedGpu => 1,
+                PhysicalDeviceType::VirtualGpu => 2,
+                PhysicalDeviceType::Cpu => 3,
+                PhysicalDeviceType::Other => 4,
+                _ => 5,
             })
             .expect("no suitable physical device found");
 
@@ -117,9 +126,7 @@ impl Renderer {
             .queue_family_properties()
             .iter()
             .enumerate()
-            .filter(|(_, q)| {
-                q.queue_flags.intersects(QueueFlags::TRANSFER)
-            })
+            .filter(|(_, q)| q.queue_flags.intersects(QueueFlags::TRANSFER))
             .min_by_key(|(_, q)| q.queue_flags.count())
             .unwrap()
             .0 as u32;
@@ -153,7 +160,8 @@ impl Renderer {
 
                     ..Default::default()
                 },
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         let graphics_queue = queues.next().unwrap();
@@ -189,7 +197,8 @@ impl Renderer {
 
                     ..Default::default()
                 },
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         let viewport = Viewport {
@@ -198,20 +207,26 @@ impl Renderer {
             depth_range: 0.0..=1.0,
         };
 
-        (Renderer {
-            command_buffer_recorders: vec!(),
-            swapchain,
-            window,
-            graphics_queue,
-            transfer_queue,
-            recreate_swapchain: false,
-            previous_frame_end: Some(sync::now(device.clone()).boxed()),
-            command_buffer_allocator: Arc::new(StandardCommandBufferAllocator::new(device.clone(), Default::default())),
-            descriptor_set_allocator: StandardDescriptorSetAllocator::new(device.clone()),
-            device: device.clone(),
-            viewport,
-            allocator: Arc::new(StandardMemoryAllocator::new_default(device.clone())),
-        }, images)
+        (
+            Renderer {
+                command_buffer_recorders: vec![],
+                swapchain,
+                window,
+                graphics_queue,
+                transfer_queue,
+                recreate_swapchain: false,
+                previous_frame_end: Some(sync::now(device.clone()).boxed()),
+                command_buffer_allocator: Arc::new(StandardCommandBufferAllocator::new(
+                    device.clone(),
+                    Default::default(),
+                )),
+                descriptor_set_allocator: StandardDescriptorSetAllocator::new(device.clone()),
+                device: device.clone(),
+                viewport,
+                allocator: Arc::new(StandardMemoryAllocator::new_default(device.clone())),
+            },
+            images,
+        )
     }
 
     pub fn render(&mut self) {
@@ -233,16 +248,24 @@ impl Renderer {
             &self.command_buffer_allocator,
             self.graphics_queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
-        ).unwrap();
+        )
+        .unwrap();
 
         for x in &self.command_buffer_recorders {
-            x.record(&mut builder, self.device.clone(), self.swapchain.clone(), self.viewport.clone(), image_index as usize);
+            x.record(
+                &mut builder,
+                self.device.clone(),
+                self.swapchain.clone(),
+                self.viewport.clone(),
+                image_index as usize,
+            );
         }
 
         // Finish building the command buffer by calling `build`.
         let command_buffer = builder.build().unwrap();
 
-        let render_future = self.previous_frame_end
+        let render_future = self
+            .previous_frame_end
             .take()
             .unwrap()
             .join(acquire_future)
@@ -280,7 +303,11 @@ pub struct WindowFrameBuffer {
 }
 
 impl WindowFrameBuffer {
-    pub fn new(viewport: &mut Viewport, memory_allocator: Arc<dyn MemoryAllocator>, images: &[Arc<Image>]) -> WindowFrameBuffer {
+    pub fn new(
+        viewport: &mut Viewport,
+        memory_allocator: Arc<dyn MemoryAllocator>,
+        images: &[Arc<Image>],
+    ) -> WindowFrameBuffer {
         let extent = images[0].extent();
         viewport.extent = [extent[0] as f32, extent[1] as f32];
 
@@ -295,8 +322,10 @@ impl WindowFrameBuffer {
                     ..Default::default()
                 },
                 AllocationCreateInfo::default(),
-            ).unwrap(),
-        ).unwrap();
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
         let swapchain_image_views = images
             .iter()
@@ -309,7 +338,12 @@ impl WindowFrameBuffer {
         }
     }
 
-    pub fn update(&mut self, viewport: &mut Viewport, memory_allocator: Arc<dyn MemoryAllocator>, images: &[Arc<Image>]) {
+    pub fn update(
+        &mut self,
+        viewport: &mut Viewport,
+        memory_allocator: Arc<dyn MemoryAllocator>,
+        images: &[Arc<Image>],
+    ) {
         let extent = images[0].extent();
         viewport.extent = [extent[0] as f32, extent[1] as f32];
 
@@ -324,8 +358,10 @@ impl WindowFrameBuffer {
                     ..Default::default()
                 },
                 AllocationCreateInfo::default(),
-            ).unwrap(),
-        ).unwrap();
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
         self.swapchain_image_views = images
             .iter()

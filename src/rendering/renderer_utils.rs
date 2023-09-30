@@ -1,6 +1,9 @@
-use vulkano::format::Format;
-use vulkano::pipeline::graphics::vertex_input::{VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate, VertexInputState};
 use crate::io::model::{Attribute, AttributeFormat};
+use vulkano::format::Format;
+use vulkano::pipeline::graphics::vertex_input::{
+    VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
+    VertexInputState,
+};
 
 pub fn create_vertex_layout(attribs: &Vec<Attribute>) -> VertexInputState {
     let mut vertex_attributes = Vec::new();
@@ -23,15 +26,21 @@ pub fn create_vertex_layout(attribs: &Vec<Attribute>) -> VertexInputState {
         };
         let size = attribute.get_size();
 
-        vertex_attributes.push((attr_idx as u32, VertexInputAttributeDescription {
-            binding: 0,
-            format: vk_type,
-            offset,
-        }));
-        vertex_bindings.push((0, VertexInputBindingDescription {
-            stride: total_size,
-            input_rate: VertexInputRate::Vertex,
-        }));
+        vertex_attributes.push((
+            attr_idx as u32,
+            VertexInputAttributeDescription {
+                binding: 0,
+                format: vk_type,
+                offset,
+            },
+        ));
+        vertex_bindings.push((
+            0,
+            VertexInputBindingDescription {
+                stride: total_size,
+                input_rate: VertexInputRate::Vertex,
+            },
+        ));
         offset += size;
     }
 
@@ -47,4 +56,3 @@ fn calculate_element_size(attribs: &Vec<Attribute>) -> u32 {
     }
     total_size
 }
-
