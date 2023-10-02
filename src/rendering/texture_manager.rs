@@ -13,12 +13,12 @@ use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSet};
 use vulkano::device::Device;
 use vulkano::format::Format;
+use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo};
 use vulkano::image::view::ImageView;
 use vulkano::image::{Image, ImageCreateInfo, ImageType, ImageUsage};
 use vulkano::memory::allocator::{AllocationCreateInfo, MemoryTypeFilter};
-use vulkano::DeviceSize;
-use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo};
 use vulkano::pipeline::PipelineLayout;
+use vulkano::DeviceSize;
 
 pub trait TextureUploader {
     fn get_width(&self) -> u32;
@@ -77,7 +77,11 @@ pub struct TextureManager {
 }
 
 impl TextureManager {
-    pub fn new(layout: Arc<PipelineLayout>, allocator: Arc<StandardDescriptorSetAllocator>, device: Arc<Device>) -> TextureManager {
+    pub fn new(
+        layout: Arc<PipelineLayout>,
+        allocator: Arc<StandardDescriptorSetAllocator>,
+        device: Arc<Device>,
+    ) -> TextureManager {
         let sampler = Sampler::new(
             device,
             SamplerCreateInfo {
@@ -86,7 +90,8 @@ impl TextureManager {
                 address_mode: [SamplerAddressMode::Repeat; 3],
                 ..Default::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
 
         TextureManager {
             sampler,
@@ -100,7 +105,8 @@ impl TextureManager {
     }
 
     fn generate_descriptor_set(&self) -> Arc<PersistentDescriptorSet> {
-        let textures: Vec<(Arc<ImageView>, Arc<Sampler>)> = self.textures
+        let textures: Vec<(Arc<ImageView>, Arc<Sampler>)> = self
+            .textures
             .iter()
             .map(|item| (Arc::clone(item), self.sampler.clone()))
             .collect();
@@ -110,13 +116,10 @@ impl TextureManager {
             &self.allocator,
             d_layout.clone(),
             self.textures.len() as u32,
-            [WriteDescriptorSet::image_view_sampler_array(
-                0,
-                0,
-                textures,
-            )],
+            [WriteDescriptorSet::image_view_sampler_array(0, 0, textures)],
             [],
-        ).unwrap()
+        )
+        .unwrap()
     }
 
     pub fn queue(&mut self, texture_uploader: Box<dyn TextureUploader>) -> u32 {

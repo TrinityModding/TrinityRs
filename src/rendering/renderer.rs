@@ -220,7 +220,9 @@ impl Renderer {
                     device.clone(),
                     Default::default(),
                 )),
-                descriptor_set_allocator: Arc::new(StandardDescriptorSetAllocator::new(device.clone())),
+                descriptor_set_allocator: Arc::new(StandardDescriptorSetAllocator::new(
+                    device.clone(),
+                )),
                 device: device.clone(),
                 viewport,
                 allocator: Arc::new(StandardMemoryAllocator::new_default(device.clone())),

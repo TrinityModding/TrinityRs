@@ -169,7 +169,11 @@ impl SceneGraph {
             fbo: window_framebuffer,
             allocator: renderer.allocator.clone(),
             shader_map: HashMap::new(),
-            texture_manager: TextureManager::new(layout, renderer.descriptor_set_allocator.clone(), renderer.device.clone()),
+            texture_manager: TextureManager::new(
+                layout,
+                renderer.descriptor_set_allocator.clone(),
+                renderer.device.clone(),
+            ),
             buffers: HashMap::new(),
         }
     }
@@ -246,7 +250,7 @@ impl SceneGraph {
                                 | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                             ..Default::default()
                         },
-                        size,
+                        element_count as DeviceSize,
                     )
                     .unwrap();
 
@@ -257,6 +261,7 @@ impl SceneGraph {
                         };
                     }
 
+                    drop(write_guard);
                     buffers.pos_vertex_buffer.transfer(
                         size,
                         transfer_buffer.clone().reinterpret(),
@@ -284,7 +289,7 @@ impl SceneGraph {
                                 | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                             ..Default::default()
                         },
-                        size,
+                        element_count as DeviceSize,
                     )
                     .unwrap();
 
@@ -293,6 +298,7 @@ impl SceneGraph {
                         *o = ColElement { uv: [i.x, i.y] };
                     }
 
+                    drop(write_guard);
                     buffers.pos_vertex_buffer.transfer(
                         size,
                         transfer_buffer.clone().reinterpret(),
@@ -316,7 +322,7 @@ impl SceneGraph {
                     | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                 ..Default::default()
             },
-            index_size,
+            mesh_info.indices.len() as DeviceSize,
         )
         .unwrap();
 
@@ -325,6 +331,7 @@ impl SceneGraph {
             *o = i;
         }
 
+        drop(write_guard);
         let sub_allocation = buffers.index_buffer.transfer(
             index_size,
             transfer_buffer.clone().reinterpret(),
@@ -360,7 +367,6 @@ fn run_worker(
     });
 }
 
-/// Sub-allocatable buffer that uses the transfer queue in order to upload data to Device Buffers
 pub struct ManagedBuffer {
     pub buffer: Arc<Buffer>,
     pub allocator: Arc<dyn Suballocator>,
@@ -419,7 +425,7 @@ impl ManagedBuffer {
 
         let mut builder = AutoCommandBufferBuilder::primary(
             &renderer.command_buffer_allocator,
-            renderer.transfer_queue.queue_family_index(),
+            renderer.graphics_queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
         .unwrap();

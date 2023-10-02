@@ -121,7 +121,6 @@ fn main() {
         .unwrap()
         .append_translation(Vec3::new(0.0, -0.8, 0.0));
 
-    // TODO: figure out how to submit these and wait after rendering starts
     let mut uploads = AutoCommandBufferBuilder::primary(
         &renderer.command_buffer_allocator,
         renderer.graphics_queue.queue_family_index(),
@@ -129,7 +128,11 @@ fn main() {
     )
     .unwrap();
 
-    graph.texture_manager.queue(Box::new(PngTextureUploader::new(fs::read(PathBuf::from("C:/Users/Hayden/Desktop/fallback.png")).unwrap())));
+    graph
+        .texture_manager
+        .queue(Box::new(PngTextureUploader::new(
+            fs::read(PathBuf::from("C:/Users/Hayden/Desktop/fallback.png")).unwrap(),
+        )));
     graph.texture_manager.upload_all(&renderer, &mut uploads);
 
     let _sampler = Sampler::new(
