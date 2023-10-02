@@ -117,6 +117,9 @@ fn main() {
         &mut graph_lock,
         &mut renderer,
     );
+
+    graph_lock.add_model(_lod_mesh.get_best());
+
     let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
     model_transform
         .lock()

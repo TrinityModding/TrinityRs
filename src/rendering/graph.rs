@@ -33,12 +33,6 @@ const COLOR_ATTRIBS_VERTEX_BUFFER_INITIAL_SIZE: u64 = 14_000000;
 const INDEX_BUFFER_INITIAL_SIZE: u64 = 6_000000;
 const INSTANCE_INFO_BUFFER_INITIAL_SIZE: u64 = 32_000000;
 
-pub trait RenderingInstance {
-    fn get_models(&mut self) -> Vec<Arc<MeshLocation>>;
-
-    fn get_instance_index(&mut self) -> u64;
-}
-
 pub struct SceneGraph {
     pub pipeline_layout: Arc<PipelineLayout>,
     pub fbo: Rc<RwLock<WindowFrameBuffer>>,
@@ -114,7 +108,6 @@ impl Recorder for SceneGraph {
             // .bind_descriptor_sets(PipelineBindPoint::Graphics, self.pipeline_layout.clone(), 0, self.set.clone()).unwrap();
 
             for instance in &buffer_guard.instances {
-                let mut instance_guard = instance.write().unwrap();
                 builder
                     .push_constants(
                         self.pipeline_layout.clone(),
@@ -123,18 +116,15 @@ impl Recorder for SceneGraph {
                     )
                     .unwrap();
 
-                for sub_mesh in &instance_guard.get_models() {
-                    // TODO: use indirect calls at some point
-                    builder
-                        .draw_indexed(
-                            sub_mesh.idx_count as u32,
-                            1,
-                            sub_mesh.idx_offset as u32,
-                            0,
-                            0,
-                        )
-                        .unwrap();
-                }
+                builder
+                    .draw_indexed(
+                        instance.0.idx_count as u32,
+                        1,
+                        instance.0.idx_offset as u32,
+                        0,
+                        0,
+                    )
+                    .unwrap();
             }
         }
 
@@ -205,6 +195,17 @@ impl SceneGraph {
         self.buffers
             .entry(pipeline)
             .or_insert(RwLock::new(BufferStorage::new(allocator, device.clone())));
+    }
+
+    pub fn add_model(
+        &mut self,
+        meshes: Vec<Arc<MeshLocation>>
+    ) {
+        for x in meshes {
+            let buffer = self.buffers.get(&x.shader).unwrap();
+            let mut write_guard = buffer.write().unwrap();
+            write_guard.instances.push((x.clone(), 0));
+        }
     }
 
     pub fn upload(
@@ -448,7 +449,7 @@ pub struct BufferStorage {
     pub index_buffer: ManagedBuffer,
     pub instance_buffer: ManagedBuffer,
     /// All instances that should be rendered with the buffers
-    pub instances: Vec<Arc<RwLock<Box<dyn RenderingInstance>>>>,
+    pub instances: Vec<(Arc<MeshLocation>, u64)>,
 }
 
 impl BufferStorage {
