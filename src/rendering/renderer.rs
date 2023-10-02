@@ -28,7 +28,7 @@ use winit::window::Window;
 
 pub trait Recorder {
     fn record(
-        &self,
+        &mut self,
         builder: &mut AutoCommandBufferBuilder<
             PrimaryAutoCommandBuffer<Arc<StandardCommandBufferAllocator>>,
             Arc<StandardCommandBufferAllocator>,
@@ -152,6 +152,7 @@ impl Renderer {
                         multi_draw_indirect: true,
                         descriptor_binding_variable_descriptor_count: true,
                         runtime_descriptor_array: true,
+                        shader_int64: true,
                         ..Features::empty()
                     },
 

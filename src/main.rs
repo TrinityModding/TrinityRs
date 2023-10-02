@@ -13,6 +13,7 @@ use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3};
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, PrimaryCommandBufferAbstract,
 };
+use vulkano::descriptor_set::layout::DescriptorBindingFlags;
 use vulkano::format::Format;
 use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo};
 use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
@@ -50,10 +51,18 @@ fn main() {
         PipelineShaderStageCreateInfo::new(read_entrypoint("standard.fs", &renderer)),
     ];
 
+    let mut layout_create_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&standard_stages);
+
+    let binding = layout_create_info.set_layouts[0]
+        .bindings
+        .get_mut(&0).unwrap();
+    binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
+    binding.descriptor_count = 1;
+
     // This layout is shared with every shader so it doesn't matter what shader gets this
     let layout = PipelineLayout::new(
         renderer.device.clone(),
-        PipelineDescriptorSetLayoutCreateInfo::from_stages(&standard_stages)
+        layout_create_info
             .into_pipeline_layout_create_info(renderer.device.clone())
             .unwrap(),
     )
@@ -79,7 +88,7 @@ fn main() {
         renderer.allocator.clone(),
         info.1.as_slice(),
     )));
-    let mut graph = SceneGraph::new(fbo.clone(), layout, &renderer);
+    let graph = SceneGraph::new(fbo.clone(), layout, &renderer);
     let mut graph_lock = graph.lock().unwrap();
 
     graph_lock.add_shader(

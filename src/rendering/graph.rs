@@ -5,9 +5,7 @@ use crate::WindowFrameBuffer;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{mpsc, Arc, Mutex, RwLock};
-use std::thread;
+use std::sync::{Arc, Mutex, RwLock};
 use ultraviolet::{Mat4, Vec4};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
@@ -15,7 +13,8 @@ use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, CopyBufferInfo, PrimaryAutoCommandBuffer,
     PrimaryCommandBufferAbstract, RenderingAttachmentInfo, RenderingInfo,
 };
-use vulkano::device::{Device, Queue};
+use vulkano::descriptor_set::PersistentDescriptorSet;
+use vulkano::device::Device;
 use vulkano::memory::allocator::suballocator::Region;
 use vulkano::memory::allocator::{
     AllocationCreateInfo, AllocationType, DeviceLayout, FreeListAllocator, MemoryTypeFilter,
@@ -23,7 +22,7 @@ use vulkano::memory::allocator::{
 };
 use vulkano::memory::DeviceAlignment;
 use vulkano::pipeline::graphics::viewport::Viewport;
-use vulkano::pipeline::{GraphicsPipeline, PipelineLayout};
+use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint, PipelineLayout};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::swapchain::Swapchain;
 use vulkano::DeviceSize;
@@ -34,6 +33,7 @@ const INDEX_BUFFER_INITIAL_SIZE: u64 = 6_000000;
 const INSTANCE_INFO_BUFFER_INITIAL_SIZE: u64 = 32_000000;
 
 pub struct SceneGraph {
+    pub descriptor_set: Option<Arc<PersistentDescriptorSet>>,
     pub pipeline_layout: Arc<PipelineLayout>,
     pub fbo: Rc<RwLock<WindowFrameBuffer>>,
     pub allocator: Arc<StandardMemoryAllocator>,
@@ -42,16 +42,26 @@ pub struct SceneGraph {
     pub shader_map: HashMap<String, Arc<GraphicsPipeline>>,
 }
 
+impl SceneGraph {
+    pub fn get_texture_descriptor(&mut self) -> Arc<PersistentDescriptorSet> {
+        if self.descriptor_set.is_none() {
+            self.descriptor_set = Some(self.texture_manager.generate_descriptor_set());
+        }
+
+        self.descriptor_set.clone().unwrap()
+    }
+}
+
 #[derive(BufferContents)]
 #[repr(C)]
 pub struct PushConstants {
-    pub instance_offset: u64,
+    pub instance_address: u64,
 }
 
 impl Recorder for SceneGraph {
     #[allow(unused_variables)]
     fn record(
-        &self,
+        &mut self,
         builder: &mut AutoCommandBufferBuilder<
             PrimaryAutoCommandBuffer<Arc<StandardCommandBufferAllocator>>,
             Arc<StandardCommandBufferAllocator>,
@@ -87,6 +97,10 @@ impl Recorder for SceneGraph {
             .set_viewport(0, [viewport.clone()].into_iter().collect())
             .unwrap();
 
+        drop(framebuffer);
+
+        builder.bind_descriptor_sets(PipelineBindPoint::Graphics, self.pipeline_layout.clone(), 0, self.get_texture_descriptor()).unwrap();
+
         for entry in &self.buffers {
             let buffer_guard = entry.1.read().unwrap();
             let raw_idx_buffer: Subbuffer<[u8]> = buffer_guard.index_buffer.buffer.clone().into();
@@ -112,7 +126,7 @@ impl Recorder for SceneGraph {
                     .push_constants(
                         self.pipeline_layout.clone(),
                         0,
-                        PushConstants { instance_offset: 0 },
+                        PushConstants { instance_address: 0 },
                     )
                     .unwrap();
 
@@ -138,23 +152,8 @@ impl SceneGraph {
         layout: Arc<PipelineLayout>,
         renderer: &Renderer,
     ) -> Arc<Mutex<SceneGraph>> {
-        // The index of the currently most up-to-date texture. The worker thread swaps the index after
-        // every finished write, which is always done to the, at that point in time, unused texture.
-        let current_texture_index = Arc::new(AtomicBool::new(false));
-        // Current generation, used to notify the worker thread of when a texture is no longer read.
-        let current_generation = Arc::new(AtomicU64::new(0));
-        let (channel, receiver) = mpsc::channel();
-        run_worker(
-            receiver,
-            renderer.transfer_queue.clone(),
-            current_texture_index.clone(),
-            current_generation.clone(),
-            renderer.swapchain.image_count(),
-            renderer.allocator.clone(),
-            renderer.command_buffer_allocator.clone(),
-        );
-
         Arc::new(Mutex::new(SceneGraph {
+            descriptor_set: None,
             pipeline_layout: layout.clone(),
             fbo: window_framebuffer,
             allocator: renderer.allocator.clone(),
@@ -345,27 +344,6 @@ impl SceneGraph {
             idx_count: sub_allocation.size,
         })
     }
-}
-
-// The job of this worker is to move data from transfer buffers into buffers on the Device
-#[allow(clippy::too_many_arguments)]
-fn run_worker(
-    channel: mpsc::Receiver<()>,
-    transfer_queue: Arc<Queue>,
-    current_texture_index: Arc<AtomicBool>,
-    current_generation: Arc<AtomicU64>,
-    swapchain_image_count: u32,
-    memory_allocator: Arc<StandardMemoryAllocator>,
-    command_buffer_allocator: Arc<StandardCommandBufferAllocator>,
-) {
-    thread::spawn(move || {
-        let mut builder = AutoCommandBufferBuilder::primary(
-            command_buffer_allocator.as_ref(),
-            transfer_queue.queue_family_index(),
-            CommandBufferUsage::OneTimeSubmit,
-        )
-        .unwrap();
-    });
 }
 
 pub struct ManagedBuffer {

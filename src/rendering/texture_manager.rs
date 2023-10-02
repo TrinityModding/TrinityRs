@@ -70,7 +70,6 @@ pub struct TextureManager {
     sampler: Arc<Sampler>,
     layout: Arc<PipelineLayout>,
     allocator: Arc<StandardDescriptorSetAllocator>,
-    pub set: Option<Arc<PersistentDescriptorSet>>,
     next_texture_id: u32,
     textures_to_upload: Vec<Rc<Mutex<Box<dyn TextureUploader>>>>,
     textures: Vec<Arc<ImageView>>,
@@ -97,14 +96,13 @@ impl TextureManager {
             sampler,
             layout,
             allocator,
-            set: None,
             next_texture_id: 0,
             textures_to_upload: Vec::new(),
             textures: Vec::new(),
         }
     }
 
-    fn generate_descriptor_set(&self) -> Arc<PersistentDescriptorSet> {
+    pub fn generate_descriptor_set(&self) -> Arc<PersistentDescriptorSet> {
         let textures: Vec<(Arc<ImageView>, Arc<Sampler>)> = self
             .textures
             .iter()
