@@ -13,3 +13,4 @@ vulkano-util = { git = "https://github.com/vulkano-rs/vulkano.git" }
 vulkano-win = { git = "https://github.com/vulkano-rs/vulkano.git" }
 winit = "0.28.3"
 png = "0.17.10"
+itertools = "0.11.0"

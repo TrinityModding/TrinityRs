@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{Cursor, Read};
 use std::mem::size_of;
 use std::ops::Div;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ultraviolet::{Vec2, Vec3, Vec4};
 use vulkano::half::f16;
@@ -86,7 +86,7 @@ pub struct MeshBufferInfo {
 
 fn read_mesh(
     reference: trmeshes,
-    path: &PathBuf,
+    path: &Path,
     material_to_shader_map: &HashMap<&str, &str>,
     render_graph: &mut SceneGraph,
     renderer: &mut Renderer,
@@ -162,10 +162,10 @@ fn read_mesh(
                         .bone_ids
                         .push(read_bytes4(&attribute.format, &mut vertex_reader)),
                     AttributeType::BlendWeights => {
-                        let w = vertex_reader.read_u16::<LittleEndian>().unwrap() as f32 / 65535.0;
-                        let x = vertex_reader.read_u16::<LittleEndian>().unwrap() as f32 / 65535.0;
-                        let y = vertex_reader.read_u16::<LittleEndian>().unwrap() as f32 / 65535.0;
-                        let z = vertex_reader.read_u16::<LittleEndian>().unwrap() as f32 / 65535.0;
+                        let w = (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
+                        let x = (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
+                        let y = (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
+                        let z = (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
                         let div = x + y + z + w;
                         mesh_buffer_info
                             .bone_weights
@@ -296,7 +296,7 @@ fn write_mesh_to_renderer(
         }
     }
 
-    return written_models;
+    written_models
 }
 
 fn read_bytes4(format: &AttributeFormat, reader: &mut Cursor<&[u8]>) -> Vec<u8> {
@@ -307,12 +307,13 @@ fn read_bytes4(format: &AttributeFormat, reader: &mut Cursor<&[u8]>) -> Vec<u8> 
             reader.read_u8().unwrap(),
             reader.read_u8().unwrap(),
         ],
-        AttributeFormat::Rgba8Unsigned(_, _) => vec![
-            reader.read_u8().unwrap(),
-            reader.read_u8().unwrap(),
-            reader.read_u8().unwrap(),
-            reader.read_u8().unwrap(),
-        ],
+        AttributeFormat::Rgba8Unsigned(_, _) => {
+            let w = reader.read_u8().unwrap();
+            let x = reader.read_u8().unwrap();
+            let y = reader.read_u8().unwrap();
+            let z = reader.read_u8().unwrap();
+            vec![w, x, y, z]
+        },
         _ => panic!("Unhandled vertex attribute format {:?}", format),
     }
 }
@@ -324,11 +325,14 @@ fn read_vec3(format: &AttributeFormat, reader: &mut Cursor<&[u8]>) -> Vec3 {
             reader.read_f32::<LittleEndian>().unwrap(),
             reader.read_f32::<LittleEndian>().unwrap(),
         ),
-        AttributeFormat::Rgba16Float(_, _) => Vec3::new(
-            f32::from(read_f16(reader)),
-            f32::from(read_f16(reader)),
-            f32::from(read_f16(reader)),
-        ),
+        AttributeFormat::Rgba16Float(_, _) => {
+            let x = f32::from(read_f16(reader)); // Ignored. Maybe padding?
+            let y = f32::from(read_f16(reader));
+            let z = f32::from(read_f16(reader));
+            let _w = f32::from(read_f16(reader));
+
+            Vec3::new(x, y, z)
+        },
         _ => panic!("Unhandled vertex attribute format {:?}", format),
     }
 }
@@ -337,7 +341,7 @@ fn read_vec2(format: &AttributeFormat, reader: &mut Cursor<&[u8]>) -> Vec2 {
     match format {
         AttributeFormat::Rg32Float(_, _) => Vec2::new(
             reader.read_f32::<LittleEndian>().unwrap(),
-            reader.read_f32::<LittleEndian>().unwrap(),
+            1.0 - reader.read_f32::<LittleEndian>().unwrap(),
         ),
         _ => panic!("Unhandled vertex attribute format {:?}", format),
     }
@@ -355,17 +359,6 @@ pub enum IndexLayout {
     UInt16(usize),
     UInt32(usize),
     UInt64(usize),
-}
-
-impl IndexLayout {
-    pub(crate) fn size(&self) -> usize {
-        match self {
-            IndexLayout::UInt8(s) => *s,
-            IndexLayout::UInt16(s) => *s,
-            IndexLayout::UInt32(s) => *s,
-            IndexLayout::UInt64(s) => *s,
-        }
-    }
 }
 
 impl IndexLayout {
@@ -449,13 +442,6 @@ pub struct Attribute {
 }
 
 impl Attribute {
-    pub fn new(type_: AttributeType, size: AttributeFormat) -> Attribute {
-        Attribute {
-            type_,
-            format: size,
-        }
-    }
-
     pub fn get_size(&self) -> u32 {
         match self.format {
             AttributeFormat::None(_, s) => s as u32,
