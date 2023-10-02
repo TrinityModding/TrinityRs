@@ -80,25 +80,27 @@ fn main() {
         info.1.as_slice(),
     )));
     let mut graph = SceneGraph::new(fbo.clone(), layout, &renderer);
-    graph.add_shader(
+    let mut graph_lock = graph.lock().unwrap();
+
+    graph_lock.add_shader(
         "Standard",
         _standard.clone(),
         renderer.allocator.clone(),
         renderer.device.clone(),
     );
-    graph.add_shader(
+    graph_lock.add_shader(
         "SSS",
         _standard.clone(),
         renderer.allocator.clone(),
         renderer.device.clone(),
     );
-    graph.add_shader(
+    graph_lock.add_shader(
         "EyeClearCoat",
         _standard.clone(),
         renderer.allocator.clone(),
         renderer.device.clone(),
     );
-    graph.add_shader(
+    graph_lock.add_shader(
         "FresnelBlend",
         _standard.clone(),
         renderer.allocator.clone(),
@@ -112,7 +114,7 @@ fn main() {
             "A:/PokemonScarlet/pokemon/data/{}/{}_00_00/{}_00_00.trmdl",
             pokemon, pokemon, pokemon
         ),
-        &mut graph,
+        &mut graph_lock,
         &mut renderer,
     );
     let model_transform = Arc::new(Mutex::new(Similarity3::identity()));
@@ -128,12 +130,14 @@ fn main() {
     )
     .unwrap();
 
-    graph
+    graph_lock
         .texture_manager
         .queue(Box::new(PngTextureUploader::new(
             fs::read(PathBuf::from("C:/Users/Hayden/Desktop/fallback.png")).unwrap(),
         )));
-    graph.texture_manager.upload_all(&renderer, &mut uploads);
+    graph_lock
+        .texture_manager
+        .upload_all(&renderer, &mut uploads);
 
     let _sampler = Sampler::new(
         renderer.device.clone(),
@@ -154,6 +158,8 @@ fn main() {
             .unwrap()
             .boxed(),
     );
+
+    drop(graph_lock);
 
     renderer.add_recorder(graph);
 

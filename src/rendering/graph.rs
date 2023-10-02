@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::mem::size_of;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{mpsc, Arc, RwLock};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::thread;
 use ultraviolet::{Mat4, Vec4};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
@@ -147,7 +147,7 @@ impl SceneGraph {
         window_framebuffer: Rc<RwLock<WindowFrameBuffer>>,
         layout: Arc<PipelineLayout>,
         renderer: &Renderer,
-    ) -> SceneGraph {
+    ) -> Arc<Mutex<SceneGraph>> {
         // The index of the currently most up-to-date texture. The worker thread swaps the index after
         // every finished write, which is always done to the, at that point in time, unused texture.
         let current_texture_index = Arc::new(AtomicBool::new(false));
@@ -164,7 +164,7 @@ impl SceneGraph {
             renderer.command_buffer_allocator.clone(),
         );
 
-        SceneGraph {
+        Arc::new(Mutex::new(SceneGraph {
             pipeline_layout: layout.clone(),
             fbo: window_framebuffer,
             allocator: renderer.allocator.clone(),
@@ -175,7 +175,7 @@ impl SceneGraph {
                 renderer.device.clone(),
             ),
             buffers: HashMap::new(),
-        }
+        }))
     }
 
     fn perspective(vertical_fov: f32, aspect_ratio: f32, z_near: f32, z_far: f32) -> Mat4 {

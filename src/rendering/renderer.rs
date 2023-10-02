@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
@@ -41,7 +41,7 @@ pub trait Recorder {
 }
 
 pub struct Renderer {
-    pub command_buffer_recorders: Vec<Box<dyn Recorder>>,
+    pub command_buffer_recorders: Vec<Arc<Mutex<dyn Recorder>>>,
     pub recreate_swapchain: bool,
     pub previous_frame_end: Option<Box<dyn GpuFuture>>,
     pub command_buffer_allocator: Arc<StandardCommandBufferAllocator>,
@@ -56,11 +56,8 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub fn add_recorder<P>(&mut self, predicate: P)
-    where
-        P: Recorder + 'static,
-    {
-        self.command_buffer_recorders.push(Box::new(predicate));
+    pub fn add_recorder(&mut self, predicate: Arc<Mutex<dyn Recorder>>) {
+        self.command_buffer_recorders.push(predicate);
     }
 
     pub fn new(window: Arc<Window>, event_loop: &EventLoop<()>) -> (Renderer, Vec<Arc<Image>>) {
@@ -254,7 +251,7 @@ impl Renderer {
         .unwrap();
 
         for x in &self.command_buffer_recorders {
-            x.record(
+            x.lock().unwrap().record(
                 &mut builder,
                 self.device.clone(),
                 self.swapchain.clone(),
