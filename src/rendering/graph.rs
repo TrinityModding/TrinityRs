@@ -135,7 +135,7 @@ impl Recorder for SceneGraph {
                         instance.0.idx_count as u32,
                         1,
                         instance.0.idx_offset as u32,
-                        0,
+                        instance.0.vertex_offset,
                         0,
                     )
                     .unwrap();
@@ -198,7 +198,7 @@ impl SceneGraph {
 
     pub fn add_model(
         &mut self,
-        meshes: Vec<Arc<MeshLocation>>
+        meshes: Vec<Arc<MeshLocation>>,
     ) {
         for x in meshes {
             let buffer = self.buffers.get(&x.shader).unwrap();
@@ -221,7 +221,7 @@ impl SceneGraph {
                     "Model requested shader that was not implemented: '{}'",
                     shader_name
                 )
-                .as_str(),
+                    .as_str(),
             )
             .clone();
         let mut buffers = self.buffers.get(&shader).unwrap().write().unwrap();
@@ -252,7 +252,7 @@ impl SceneGraph {
                         },
                         element_count as DeviceSize,
                     )
-                    .unwrap();
+                        .unwrap();
 
                     let mut write_guard = transfer_buffer.write().unwrap();
                     for (o, i) in write_guard.iter_mut().zip(mesh_info.positions) {
@@ -291,7 +291,7 @@ impl SceneGraph {
                         },
                         element_count as DeviceSize,
                     )
-                    .unwrap();
+                        .unwrap();
 
                     let mut write_guard = transfer_buffer.write().unwrap();
                     for (o, i) in write_guard.iter_mut().zip(mesh_info.uvs) {
@@ -310,6 +310,7 @@ impl SceneGraph {
         }
 
         // Write index buffer
+        let idx_count = mesh_info.indices.len() as u64;
         let index_size = (mesh_info.indices.len() * size_of::<u32>()) as DeviceSize;
         let transfer_buffer: Subbuffer<[u32]> = Buffer::new_slice(
             self.allocator.clone(),
@@ -324,7 +325,7 @@ impl SceneGraph {
             },
             mesh_info.indices.len() as DeviceSize,
         )
-        .unwrap();
+            .unwrap();
 
         let mut write_guard = transfer_buffer.write().unwrap();
         for (o, i) in write_guard.iter_mut().zip(mesh_info.indices) {
@@ -340,8 +341,9 @@ impl SceneGraph {
 
         Arc::new(MeshLocation {
             shader,
-            idx_offset: sub_allocation.offset,
-            idx_count: sub_allocation.size,
+            idx_offset: sub_allocation.offset / (size_of::<u32>() as u64),
+            idx_count,
+            vertex_offset: 0,
         })
     }
 }
@@ -373,7 +375,7 @@ impl ManagedBuffer {
             },
             DeviceLayout::from_size_alignment(size, DeviceAlignment::MIN.as_devicesize()).unwrap(),
         )
-        .unwrap();
+            .unwrap();
 
         ManagedBuffer {
             buffer,
@@ -407,7 +409,7 @@ impl ManagedBuffer {
             renderer.graphics_queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
-        .unwrap();
+            .unwrap();
 
         builder.copy_buffer(copy_info).unwrap();
         let cmd_buffer = builder.build().unwrap();
@@ -466,4 +468,6 @@ pub struct MeshLocation {
     pub shader: Arc<GraphicsPipeline>,
     pub idx_offset: u64,
     pub idx_count: u64,
+    ///a constant value that should be added to each index in the index buffer to produce the final vertex number to be used.
+    pub vertex_offset: i32,
 }
