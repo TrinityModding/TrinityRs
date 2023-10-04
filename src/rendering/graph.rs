@@ -216,13 +216,8 @@ impl SceneGraph {
         let shader = self
             .shader_map
             .get(shader_name)
-            .expect(
-                format!(
-                    "Model requested shader that was not implemented: '{}'",
-                    shader_name
-                )
-                    .as_str(),
-            )
+            .unwrap_or_else(|| panic!("Model requested shader that was not implemented: '{}'",
+                    shader_name))
             .clone();
         let mut buffers = self.buffers.get(&shader).unwrap().write().unwrap();
 
@@ -310,7 +305,7 @@ impl SceneGraph {
         }
 
         // Write index buffer
-        let idx_count = mesh_info.indices.len() as u64;
+        let idx_count = mesh_info.indices.len() as u64 - 1;
         let index_size = (mesh_info.indices.len() * size_of::<u32>()) as DeviceSize;
         let transfer_buffer: Subbuffer<[u32]> = Buffer::new_slice(
             self.allocator.clone(),
@@ -341,7 +336,7 @@ impl SceneGraph {
 
         Arc::new(MeshLocation {
             shader,
-            idx_offset: sub_allocation.offset / (size_of::<u32>() as u64),
+            idx_offset: sub_allocation.offset,
             idx_count,
             vertex_offset: 0,
         })

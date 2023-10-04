@@ -117,12 +117,8 @@ fn main() {
     );
 
     // Load model into graph
-    let pokemon = "pm1018";
     let _lod_mesh = from_trmdl(
-        format!(
-            "A:/PokemonScarlet/pokemon/data/{}/{}_00_00/{}_00_00.trmdl",
-            pokemon, pokemon, pokemon
-        ),
+String::from("pikachu/pm0025_00_00.trmdl"),
         &mut graph_lock,
         &mut renderer,
     );
