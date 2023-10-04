@@ -284,11 +284,7 @@ fn write_mesh_to_renderer(
                 indices: if sub_mesh.1.indices.is_empty() {
                     Vec::new()
                 } else {
-                    mesh_indices
-                        .iter()
-                        .cloned()
-                        .map(|x| x - (smallest_idx as u32))
-                        .collect()
+                    mesh_indices.to_vec()
                 },
             };
 

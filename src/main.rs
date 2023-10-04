@@ -141,7 +141,7 @@ String::from("pikachu/pm0025_00_00.trmdl"),
     graph_lock
         .texture_manager
         .queue(Box::new(PngTextureUploader::new(
-            fs::read(PathBuf::from("C:/Users/Hayden/Desktop/fallback.png")).unwrap(),
+            fs::read(PathBuf::from("pikachu/fallback.png")).unwrap(),
         )));
     graph_lock
         .texture_manager

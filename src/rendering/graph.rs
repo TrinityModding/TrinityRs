@@ -305,7 +305,7 @@ impl SceneGraph {
         }
 
         // Write index buffer
-        let idx_count = mesh_info.indices.len() as u64 - 1;
+        let idx_count = mesh_info.indices.len();
         let index_size = (mesh_info.indices.len() * size_of::<u32>()) as DeviceSize;
         let transfer_buffer: Subbuffer<[u32]> = Buffer::new_slice(
             self.allocator.clone(),
@@ -318,7 +318,7 @@ impl SceneGraph {
                     | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                 ..Default::default()
             },
-            mesh_info.indices.len() as DeviceSize,
+            idx_count as DeviceSize,
         )
             .unwrap();
 
@@ -337,7 +337,7 @@ impl SceneGraph {
         Arc::new(MeshLocation {
             shader,
             idx_offset: sub_allocation.offset,
-            idx_count,
+            idx_count: idx_count as u64 - 1,
             vertex_offset: 0,
         })
     }
@@ -388,7 +388,7 @@ impl ManagedBuffer {
         let device_allocation = self
             .allocator
             .allocate(
-                DeviceLayout::from_size_alignment(size, self.sub_alloc_alignment.as_devicesize())
+                DeviceLayout::from_size_alignment(size, DeviceAlignment::MIN.as_devicesize())
                     .unwrap(),
                 AllocationType::Linear,
                 DeviceAlignment::MIN,
