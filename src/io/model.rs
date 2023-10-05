@@ -1,7 +1,7 @@
 use crate::io::flatbuffers::trmbf_generated::titan::model::root_as_trmbf;
 use crate::io::flatbuffers::trmdl_generated::titan::model::{root_as_trmdl, trmeshes};
 use crate::io::flatbuffers::trmsh_generated::titan::model::{
-    root_as_trmsh, MaterialInfo, PolygonType, Type, VertexAttribute,
+    root_as_trmsh, PolygonType, Type, VertexAttribute,
 };
 use crate::io::flatbuffers::trmtr_generated::titan::model::root_as_trmtr_unchecked;
 use crate::rendering::graph::{MeshLocation, SceneGraph};
@@ -162,10 +162,14 @@ fn read_mesh(
                         .bone_ids
                         .push(read_bytes4(&attribute.format, &mut vertex_reader)),
                     AttributeType::BlendWeights => {
-                        let w = (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
-                        let x = (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
-                        let y = (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
-                        let z = (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
+                        let w =
+                            (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
+                        let x =
+                            (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
+                        let y =
+                            (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
+                        let z =
+                            (vertex_reader.read_u16::<LittleEndian>().unwrap() as f32) / 65535.0;
                         let div = x + y + z + w;
                         mesh_buffer_info
                             .bone_weights
@@ -210,89 +214,17 @@ fn read_mesh(
         // Reorganise data to make it more readable for us
         for sub_mesh in info.materials().unwrap() {
             let material_name = sub_mesh.material_name().unwrap();
-            let shader = material_to_shader_map.get(material_name).unwrap();
+            let shader = *material_to_shader_map.get(material_name).unwrap();
 
             shader_to_mesh_map
-                .entry(String::from(*shader))
-                .or_insert(Vec::new())
-                .push((sub_mesh, info_ref.clone()));
+                .entry(String::from(shader))
+                .or_insert((info_ref.clone(), Vec::new()))
+                .1
+                .push(sub_mesh);
         }
     }
 
-    write_mesh_to_renderer(shader_to_mesh_map, render_graph, renderer)
-}
-
-fn write_mesh_to_renderer(
-    shader_to_mesh_map: HashMap<String, Vec<(MaterialInfo, Arc<MeshBufferInfo>)>>,
-    render_graph: &mut SceneGraph,
-    renderer: &mut Renderer,
-) -> Vec<Arc<MeshLocation>> {
-    let mut written_models = Vec::new();
-
-    for entry in shader_to_mesh_map {
-        let shader_name = entry.0;
-
-        for sub_mesh in entry.1 {
-            let idx_offset = sub_mesh.0.poly_offset() as usize;
-            let idx_count = sub_mesh.0.poly_count() as usize;
-
-            let mesh_indices = &sub_mesh.1.indices.as_slice()[idx_offset..(idx_offset + idx_count)];
-            let smallest_idx = mesh_indices.iter().cloned().min().unwrap() as usize;
-            let biggest_idx = mesh_indices.iter().cloned().max().unwrap() as usize;
-
-            let sub_mesh_buffer_info = MeshBufferInfo {
-                positions: if sub_mesh.1.positions.is_empty() {
-                    Vec::new()
-                } else {
-                    sub_mesh.1.positions.as_slice()[smallest_idx..biggest_idx].to_vec()
-                },
-                normals: if sub_mesh.1.normals.is_empty() {
-                    Vec::new()
-                } else {
-                    sub_mesh.1.normals.as_slice()[smallest_idx..biggest_idx].to_vec()
-                },
-                tangents: if sub_mesh.1.tangents.is_empty() {
-                    Vec::new()
-                } else {
-                    sub_mesh.1.tangents.as_slice()[smallest_idx..biggest_idx].to_vec()
-                },
-                bi_normals: if sub_mesh.1.bi_normals.is_empty() {
-                    Vec::new()
-                } else {
-                    sub_mesh.1.bi_normals.as_slice()[smallest_idx..biggest_idx].to_vec()
-                },
-                colors: if sub_mesh.1.colors.is_empty() {
-                    Vec::new()
-                } else {
-                    sub_mesh.1.colors.as_slice()[smallest_idx..biggest_idx].to_vec()
-                },
-                uvs: if sub_mesh.1.uvs.is_empty() {
-                    Vec::new()
-                } else {
-                    sub_mesh.1.uvs.as_slice()[smallest_idx..biggest_idx].to_vec()
-                },
-                bone_ids: if sub_mesh.1.bone_ids.is_empty() {
-                    Vec::new()
-                } else {
-                    sub_mesh.1.bone_ids.as_slice()[smallest_idx..biggest_idx].to_vec()
-                },
-                bone_weights: if sub_mesh.1.bone_weights.is_empty() {
-                    Vec::new()
-                } else {
-                    sub_mesh.1.bone_weights.as_slice()[smallest_idx..biggest_idx].to_vec()
-                },
-                indices: if sub_mesh.1.indices.is_empty() {
-                    Vec::new()
-                } else {
-                    mesh_indices.to_vec()
-                },
-            };
-
-            written_models.push(render_graph.upload(&shader_name, sub_mesh_buffer_info, renderer));
-        }
-    }
-
-    written_models
+    render_graph.write_mesh_to_renderer(shader_to_mesh_map, renderer)
 }
 
 fn read_bytes4(format: &AttributeFormat, reader: &mut Cursor<&[u8]>) -> Vec<u8> {
@@ -309,7 +241,7 @@ fn read_bytes4(format: &AttributeFormat, reader: &mut Cursor<&[u8]>) -> Vec<u8> 
             let y = reader.read_u8().unwrap();
             let z = reader.read_u8().unwrap();
             vec![w, x, y, z]
-        },
+        }
         _ => panic!("Unhandled vertex attribute format {:?}", format),
     }
 }
@@ -328,7 +260,7 @@ fn read_vec3(format: &AttributeFormat, reader: &mut Cursor<&[u8]>) -> Vec3 {
             let _w = f32::from(read_f16(reader));
 
             Vec3::new(x, y, z)
-        },
+        }
         _ => panic!("Unhandled vertex attribute format {:?}", format),
     }
 }

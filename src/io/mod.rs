@@ -4,4 +4,4 @@ pub mod model;
 #[allow(non_snake_case)]
 #[allow(unused)]
 #[allow(non_camel_case_types)]
-mod flatbuffers;
+pub mod flatbuffers;

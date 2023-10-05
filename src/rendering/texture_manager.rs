@@ -90,7 +90,7 @@ impl TextureManager {
                 ..Default::default()
             },
         )
-            .unwrap();
+        .unwrap();
 
         TextureManager {
             sampler,
@@ -117,7 +117,7 @@ impl TextureManager {
             [WriteDescriptorSet::image_view_sampler_array(0, 0, textures)],
             [],
         )
-            .unwrap()
+        .unwrap()
     }
 
     pub fn queue(&mut self, texture_uploader: Box<dyn TextureUploader>) -> u32 {
@@ -153,7 +153,7 @@ impl TextureManager {
                 },
                 (guard.get_width() * guard.get_height() * 4) as DeviceSize,
             )
-                .unwrap();
+            .unwrap();
 
             guard.upload(&upload_buffer);
 
@@ -168,7 +168,7 @@ impl TextureManager {
                 },
                 AllocationCreateInfo::default(),
             )
-                .unwrap();
+            .unwrap();
 
             uploads
                 .copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(

@@ -1,3 +1,4 @@
+use crate::io::flatbuffers::trmsh_generated::titan::model::MaterialInfo;
 use crate::io::model::MeshBufferInfo;
 use crate::rendering::renderer::{Recorder, Renderer};
 use crate::rendering::texture_manager::TextureManager;
@@ -32,6 +33,12 @@ const COLOR_ATTRIBS_VERTEX_BUFFER_INITIAL_SIZE: u64 = 14_000000;
 const INDEX_BUFFER_INITIAL_SIZE: u64 = 6_000000;
 const INSTANCE_INFO_BUFFER_INITIAL_SIZE: u64 = 32_000000;
 
+#[derive(BufferContents)]
+#[repr(C)]
+pub struct PushConstants {
+    pub instance_address: u64,
+}
+
 pub struct SceneGraph {
     pub descriptor_set: Option<Arc<PersistentDescriptorSet>>,
     pub pipeline_layout: Arc<PipelineLayout>,
@@ -40,22 +47,6 @@ pub struct SceneGraph {
     pub texture_manager: TextureManager,
     pub buffers: HashMap<Arc<GraphicsPipeline>, RwLock<BufferStorage>>,
     pub shader_map: HashMap<String, Arc<GraphicsPipeline>>,
-}
-
-impl SceneGraph {
-    pub fn get_texture_descriptor(&mut self) -> Arc<PersistentDescriptorSet> {
-        if self.descriptor_set.is_none() {
-            self.descriptor_set = Some(self.texture_manager.generate_descriptor_set());
-        }
-
-        self.descriptor_set.clone().unwrap()
-    }
-}
-
-#[derive(BufferContents)]
-#[repr(C)]
-pub struct PushConstants {
-    pub instance_address: u64,
 }
 
 impl Recorder for SceneGraph {
@@ -99,7 +90,14 @@ impl Recorder for SceneGraph {
 
         drop(framebuffer);
 
-        builder.bind_descriptor_sets(PipelineBindPoint::Graphics, self.pipeline_layout.clone(), 0, self.get_texture_descriptor()).unwrap();
+        builder
+            .bind_descriptor_sets(
+                PipelineBindPoint::Graphics,
+                self.pipeline_layout.clone(),
+                0,
+                self.get_texture_descriptor(),
+            )
+            .unwrap();
 
         for entry in &self.buffers {
             let buffer_guard = entry.1.read().unwrap();
@@ -126,7 +124,9 @@ impl Recorder for SceneGraph {
                     .push_constants(
                         self.pipeline_layout.clone(),
                         0,
-                        PushConstants { instance_address: 0 },
+                        PushConstants {
+                            instance_address: 0,
+                        },
                     )
                     .unwrap();
 
@@ -186,20 +186,16 @@ impl SceneGraph {
         name: &str,
         pipeline: Arc<GraphicsPipeline>,
         allocator: Arc<StandardMemoryAllocator>,
-        device: Arc<Device>,
     ) {
         self.shader_map
             .entry(name.to_string())
             .or_insert(pipeline.clone());
         self.buffers
             .entry(pipeline)
-            .or_insert(RwLock::new(BufferStorage::new(allocator, device.clone())));
+            .or_insert(RwLock::new(BufferStorage::new(allocator)));
     }
 
-    pub fn add_model(
-        &mut self,
-        meshes: Vec<Arc<MeshLocation>>,
-    ) {
+    pub fn add_model(&mut self, meshes: Vec<Arc<MeshLocation>>) {
         for x in meshes {
             let buffer = self.buffers.get(&x.shader).unwrap();
             let mut write_guard = buffer.write().unwrap();
@@ -207,107 +203,11 @@ impl SceneGraph {
         }
     }
 
-    pub fn upload(
-        &self,
-        shader_name: &String,
-        mesh_info: MeshBufferInfo,
-        renderer: &mut Renderer,
-    ) -> Arc<MeshLocation> {
-        let shader = self
-            .shader_map
-            .get(shader_name)
-            .unwrap_or_else(|| panic!("Model requested shader that was not implemented: '{}'",
-                    shader_name))
-            .clone();
-        let mut buffers = self.buffers.get(&shader).unwrap().write().unwrap();
-
-        // Upload Vertex Data
-        match shader_name.as_str() {
-            "Standard" | "FresnelBlend" | "EyeClearCoat" | "SSS" => {
-                let element_count = mesh_info.positions.len();
-                {
-                    #[derive(BufferContents)]
-                    #[repr(C)]
-                    pub struct PosElement {
-                        pub position: [f32; 3],
-                    }
-
-                    let pos_buffer_element_size = size_of::<PosElement>();
-                    let size = (pos_buffer_element_size * element_count) as DeviceSize;
-                    let transfer_buffer: Subbuffer<[PosElement]> = Buffer::new_slice(
-                        self.allocator.clone(),
-                        BufferCreateInfo {
-                            usage: BufferUsage::TRANSFER_SRC,
-                            ..Default::default()
-                        },
-                        AllocationCreateInfo {
-                            memory_type_filter: MemoryTypeFilter::PREFER_HOST
-                                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                            ..Default::default()
-                        },
-                        element_count as DeviceSize,
-                    )
-                        .unwrap();
-
-                    let mut write_guard = transfer_buffer.write().unwrap();
-                    for (o, i) in write_guard.iter_mut().zip(mesh_info.positions) {
-                        *o = PosElement {
-                            position: [i.x, i.y, i.z],
-                        };
-                    }
-
-                    drop(write_guard);
-                    buffers.pos_vertex_buffer.transfer(
-                        size,
-                        transfer_buffer.clone().reinterpret(),
-                        renderer,
-                    );
-                }
-
-                {
-                    #[derive(BufferContents)]
-                    #[repr(C)]
-                    pub struct ColElement {
-                        pub uv: [f32; 2],
-                    }
-
-                    let col_buffer_element_size = size_of::<ColElement>();
-                    let size = (col_buffer_element_size * element_count) as DeviceSize;
-                    let transfer_buffer: Subbuffer<[ColElement]> = Buffer::new_slice(
-                        self.allocator.clone(),
-                        BufferCreateInfo {
-                            usage: BufferUsage::TRANSFER_SRC,
-                            ..Default::default()
-                        },
-                        AllocationCreateInfo {
-                            memory_type_filter: MemoryTypeFilter::PREFER_HOST
-                                | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
-                            ..Default::default()
-                        },
-                        element_count as DeviceSize,
-                    )
-                        .unwrap();
-
-                    let mut write_guard = transfer_buffer.write().unwrap();
-                    for (o, i) in write_guard.iter_mut().zip(mesh_info.uvs) {
-                        *o = ColElement { uv: [i.x, i.y] };
-                    }
-
-                    drop(write_guard);
-                    buffers.pos_vertex_buffer.transfer(
-                        size,
-                        transfer_buffer.clone().reinterpret(),
-                        renderer,
-                    );
-                }
-            }
-            _ => panic!("No method to convert mesh data for shader"),
-        }
-
-        // Write index buffer
-        let idx_count = mesh_info.indices.len();
-        let index_size = (mesh_info.indices.len() * size_of::<u32>()) as DeviceSize;
-        let transfer_buffer: Subbuffer<[u32]> = Buffer::new_slice(
+    fn new_transfer_buffer<T>(&self, size: DeviceSize) -> Subbuffer<[T]>
+    where
+        T: BufferContents,
+    {
+        Buffer::new_slice(
             self.allocator.clone(),
             BufferCreateInfo {
                 usage: BufferUsage::TRANSFER_SRC,
@@ -318,28 +218,122 @@ impl SceneGraph {
                     | MemoryTypeFilter::HOST_SEQUENTIAL_WRITE,
                 ..Default::default()
             },
-            idx_count as DeviceSize,
+            size,
         )
-            .unwrap();
+        .unwrap()
+    }
 
-        let mut write_guard = transfer_buffer.write().unwrap();
-        for (o, i) in write_guard.iter_mut().zip(mesh_info.indices) {
-            *o = i;
+    pub fn write_mesh_to_renderer(
+        &mut self,
+        shader_to_mesh_map: HashMap<String, (Arc<MeshBufferInfo>, Vec<MaterialInfo>)>,
+        renderer: &mut Renderer,
+    ) -> Vec<Arc<MeshLocation>> {
+        let mut written_models = Vec::new();
+
+        for entry in shader_to_mesh_map {
+            let shader_name = entry.0;
+            let mesh_info = entry.1 .0;
+
+            let shader = self
+                .shader_map
+                .get(shader_name.as_str())
+                .unwrap_or_else(|| panic!("Unimplemented shader requested: '{}'", shader_name))
+                .clone();
+            let mut buffers = self.buffers.get(&shader).unwrap().write().unwrap();
+
+            // Upload Vertex Data
+            match shader_name.as_str() {
+                "Standard" | "FresnelBlend" | "EyeClearCoat" | "SSS" => {
+                    let element_count = mesh_info.positions.len();
+                    {
+                        #[derive(BufferContents)]
+                        #[repr(C)]
+                        pub struct PosElement {
+                            pub position: [f32; 3],
+                        }
+
+                        let pos_buffer_element_size = size_of::<PosElement>();
+                        let transfer_buffer: Subbuffer<[PosElement]> =
+                            self.new_transfer_buffer(element_count as DeviceSize);
+                        let mut write_guard = transfer_buffer.write().unwrap();
+                        for (o, i) in write_guard.iter_mut().zip(mesh_info.positions.clone()) {
+                            *o = PosElement {
+                                position: [i.x, i.y, i.z],
+                            };
+                        }
+
+                        drop(write_guard);
+                        buffers.pos_vertex_buffer.transfer(
+                            (pos_buffer_element_size * element_count) as DeviceSize,
+                            transfer_buffer.clone().reinterpret(),
+                            renderer,
+                        );
+                    }
+
+                    {
+                        #[derive(BufferContents)]
+                        #[repr(C)]
+                        pub struct ColElement {
+                            pub uv: [f32; 2],
+                        }
+
+                        let col_buffer_element_size = size_of::<ColElement>();
+                        let transfer_buffer: Subbuffer<[ColElement]> =
+                            self.new_transfer_buffer(element_count as DeviceSize);
+                        let mut write_guard = transfer_buffer.write().unwrap();
+                        for (o, i) in write_guard.iter_mut().zip(mesh_info.uvs.clone()) {
+                            *o = ColElement { uv: [i.x, i.y] };
+                        }
+
+                        drop(write_guard);
+                        buffers.pos_vertex_buffer.transfer(
+                            (col_buffer_element_size * element_count) as DeviceSize,
+                            transfer_buffer.clone().reinterpret(),
+                            renderer,
+                        );
+                    }
+                }
+                _ => panic!("No method to convert mesh data for shader"),
+            }
+
+            // Write index buffer
+            let idx_count = mesh_info.indices.len();
+            let transfer_buffer: Subbuffer<[u32]> =
+                self.new_transfer_buffer(idx_count as DeviceSize);
+            let mut write_guard = transfer_buffer.write().unwrap();
+            for (o, i) in write_guard.iter_mut().zip(mesh_info.indices.clone()) {
+                *o = i;
+            }
+
+            drop(write_guard);
+            buffers.index_buffer.transfer(
+                (mesh_info.indices.len() * size_of::<u32>()) as DeviceSize,
+                transfer_buffer.clone().reinterpret(),
+                renderer,
+            );
+
+            for sub_mesh in entry.1 .1 {
+                written_models.push(Arc::new(MeshLocation {
+                    shader: shader.clone(),
+                    idx_offset: sub_mesh.poly_offset() as u64,
+                    idx_count: sub_mesh.poly_count() as u64,
+                    vertex_offset: buffers.vertex_offset,
+                }));
+            }
+
+            // Make sure the next meshes are offset correctly
+            buffers.vertex_offset += mesh_info.positions.len() as i32;
         }
 
-        drop(write_guard);
-        let sub_allocation = buffers.index_buffer.transfer(
-            index_size,
-            transfer_buffer.clone().reinterpret(),
-            renderer,
-        );
+        written_models
+    }
 
-        Arc::new(MeshLocation {
-            shader,
-            idx_offset: sub_allocation.offset,
-            idx_count: idx_count as u64 - 1,
-            vertex_offset: 0,
-        })
+    pub fn get_texture_descriptor(&mut self) -> Arc<PersistentDescriptorSet> {
+        if self.descriptor_set.is_none() {
+            self.descriptor_set = Some(self.texture_manager.generate_descriptor_set());
+        }
+
+        self.descriptor_set.clone().unwrap()
     }
 }
 
@@ -354,10 +348,7 @@ impl ManagedBuffer {
         allocator: Arc<StandardMemoryAllocator>,
         buffer_usage: BufferUsage,
         size: DeviceSize,
-        device: Arc<Device>,
     ) -> ManagedBuffer {
-        let alignment = device.physical_device().properties().non_coherent_atom_size;
-
         let buffer = Buffer::new(
             allocator,
             BufferCreateInfo {
@@ -370,12 +361,12 @@ impl ManagedBuffer {
             },
             DeviceLayout::from_size_alignment(size, DeviceAlignment::MIN.as_devicesize()).unwrap(),
         )
-            .unwrap();
+        .unwrap();
 
         ManagedBuffer {
             buffer,
             allocator: Arc::new(FreeListAllocator::new(Region::new(0, size).unwrap())),
-            sub_alloc_alignment: alignment,
+            sub_alloc_alignment: DeviceAlignment::MIN,
         }
     }
 
@@ -404,19 +395,19 @@ impl ManagedBuffer {
             renderer.graphics_queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
-            .unwrap();
+        .unwrap();
 
         builder.copy_buffer(copy_info).unwrap();
         let cmd_buffer = builder.build().unwrap();
 
         //TODO: make this happen on the transfer thread and somehow let the model references know that their model is ready for rendering
         let _ = cmd_buffer.execute(renderer.graphics_queue.clone()).unwrap();
-
         device_allocation
     }
 }
 
 pub struct BufferStorage {
+    pub vertex_offset: i32,
     /// Just the position attribute
     pub pos_vertex_buffer: ManagedBuffer,
     /// Attributes used for colour
@@ -428,31 +419,28 @@ pub struct BufferStorage {
 }
 
 impl BufferStorage {
-    pub fn new(allocator: Arc<StandardMemoryAllocator>, device: Arc<Device>) -> BufferStorage {
+    pub fn new(allocator: Arc<StandardMemoryAllocator>) -> BufferStorage {
         BufferStorage {
+            vertex_offset: 0,
             pos_vertex_buffer: ManagedBuffer::new(
                 allocator.clone(),
                 BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST,
                 POS_ATTRIB_VERTEX_BUFFER_INITIAL_SIZE,
-                device.clone(),
             ),
             color_vertex_buffer: ManagedBuffer::new(
                 allocator.clone(),
                 BufferUsage::VERTEX_BUFFER | BufferUsage::TRANSFER_DST,
                 COLOR_ATTRIBS_VERTEX_BUFFER_INITIAL_SIZE,
-                device.clone(),
             ),
             index_buffer: ManagedBuffer::new(
                 allocator.clone(),
                 BufferUsage::INDEX_BUFFER | BufferUsage::TRANSFER_DST,
                 INDEX_BUFFER_INITIAL_SIZE,
-                device.clone(),
             ),
             instance_buffer: ManagedBuffer::new(
                 allocator.clone(),
                 BufferUsage::STORAGE_BUFFER | BufferUsage::TRANSFER_DST,
                 INSTANCE_INFO_BUFFER_INITIAL_SIZE,
-                device.clone(),
             ),
             instances: Vec::new(),
         }

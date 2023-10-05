@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use crate::rendering::renderer::Renderer;
+use itertools::Itertools;
+use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
-use itertools::Itertools;
 use vulkano::format::Format;
 use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
@@ -44,14 +44,16 @@ impl PipelineCreationInfo {
         stages: [PipelineShaderStageCreateInfo; 2],
         layout: Arc<PipelineLayout>,
     ) -> Arc<GraphicsPipeline> {
-        let element_sizes: HashMap<u32, u32> =
-            self.attributes.iter().group_by(|x| x.binding)
-                .into_iter()
-                .map(|(binding, group)| {
-                    let size_sum: u32 = group.map(|x| x.get_attribute_size()).sum();
-                    (binding, size_sum)
-                })
-                .collect();
+        let element_sizes: HashMap<u32, u32> = self
+            .attributes
+            .iter()
+            .group_by(|x| x.binding)
+            .into_iter()
+            .map(|(binding, group)| {
+                let size_sum: u32 = group.map(|x| x.get_attribute_size()).sum();
+                (binding, size_sum)
+            })
+            .collect();
 
         let mut vertex_attributes = Vec::new();
         let mut vertex_bindings = Vec::new();
@@ -111,6 +113,6 @@ impl PipelineCreationInfo {
                 ..GraphicsPipelineCreateInfo::layout(layout)
             },
         )
-            .unwrap()
+        .unwrap()
     }
 }

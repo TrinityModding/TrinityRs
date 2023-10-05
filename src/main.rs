@@ -51,11 +51,13 @@ fn main() {
         PipelineShaderStageCreateInfo::new(read_entrypoint("standard.fs", &renderer)),
     ];
 
-    let mut layout_create_info = PipelineDescriptorSetLayoutCreateInfo::from_stages(&standard_stages);
+    let mut layout_create_info =
+        PipelineDescriptorSetLayoutCreateInfo::from_stages(&standard_stages);
 
     let binding = layout_create_info.set_layouts[0]
         .bindings
-        .get_mut(&0).unwrap();
+        .get_mut(&0)
+        .unwrap();
     binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
     binding.descriptor_count = 1;
 
@@ -91,34 +93,22 @@ fn main() {
     let graph = SceneGraph::new(fbo.clone(), layout, &renderer);
     let mut graph_lock = graph.lock().unwrap();
 
-    graph_lock.add_shader(
-        "Standard",
-        _standard.clone(),
-        renderer.allocator.clone(),
-        renderer.device.clone(),
-    );
-    graph_lock.add_shader(
-        "SSS",
-        _standard.clone(),
-        renderer.allocator.clone(),
-        renderer.device.clone(),
-    );
+    graph_lock.add_shader("Standard", _standard.clone(), renderer.allocator.clone());
+    graph_lock.add_shader("SSS", _standard.clone(), renderer.allocator.clone());
     graph_lock.add_shader(
         "EyeClearCoat",
         _standard.clone(),
         renderer.allocator.clone(),
-        renderer.device.clone(),
     );
     graph_lock.add_shader(
         "FresnelBlend",
         _standard.clone(),
         renderer.allocator.clone(),
-        renderer.device.clone(),
     );
 
     // Load model into graph
     let _lod_mesh = from_trmdl(
-String::from("pikachu/pm0025_00_00.trmdl"),
+        String::from("pikachu/pm0025_00_00.trmdl"),
         &mut graph_lock,
         &mut renderer,
     );
