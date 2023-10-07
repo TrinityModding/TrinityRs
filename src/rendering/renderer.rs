@@ -153,6 +153,7 @@ impl Renderer {
                         descriptor_binding_variable_descriptor_count: true,
                         runtime_descriptor_array: true,
                         shader_int64: true,
+                        buffer_device_address: true,
                         ..Features::empty()
                     },
 

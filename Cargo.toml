@@ -9,8 +9,15 @@ bytemuck = "1.14.0"
 byteorder = "1.4.3"
 ultraviolet = { version = "0.9.2", features = ["bytemuck"] }
 vulkano = { git = "https://github.com/vulkano-rs/vulkano.git" }
+vulkano-shaders = { git = "https://github.com/vulkano-rs/vulkano.git" }
 vulkano-util = { git = "https://github.com/vulkano-rs/vulkano.git" }
 vulkano-win = { git = "https://github.com/vulkano-rs/vulkano.git" }
 winit = "0.28.3"
 png = "0.17.10"
 itertools = "0.11.0"
+
+[profile.release]
+lto = true          # Enable link-time optimization
+codegen-units = 1   # Reduce number of codegen units to increase optimizations
+panic = 'abort'     # Abort on panic
+strip = true        # Strip symbols from binary*

@@ -190,6 +190,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
+name = "cmake"
+version = "0.1.50"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a31c789563b815f77f4250caee12365734369f942439b7defd71e18a48197130"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -830,6 +839,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbb5fb1acd8a1a18b3dd5be62d25485eb770e05afb408a9627d14d451bae12da"
 
 [[package]]
+name = "roxmltree"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "921904a62e410e37e215c40381b7117f830d9d89ba60ab5236170541dd25646b"
+dependencies = [
+ "xmlparser",
+]
+
+[[package]]
 name = "rustc_version"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -913,6 +931,27 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "shaderc"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31cef52787a0db5108788ea20bed13d6bf4b96287c5c5201e55725f7070f3443"
+dependencies = [
+ "libc",
+ "shaderc-sys",
+]
+
+[[package]]
+name = "shaderc-sys"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e8f8439fffcffd6efcd74197204addf935dbab5752696bd990a6cd36d54cf64"
+dependencies = [
+ "cmake",
+ "libc",
+ "roxmltree",
 ]
 
 [[package]]
@@ -1066,6 +1105,7 @@ dependencies = [
  "png",
  "ultraviolet",
  "vulkano",
+ "vulkano-shaders",
  "vulkano-util",
  "vulkano-win",
  "winit",
@@ -1117,7 +1157,7 @@ dependencies = [
 [[package]]
 name = "vulkano"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#44732afefe694c12c3871e5a4e202b4bd984fb30"
+source = "git+https://github.com/vulkano-rs/vulkano.git#9d988440df731e439ebf4d9b4071a864ece5b95b"
 dependencies = [
  "ahash",
  "ash",
@@ -1146,7 +1186,7 @@ dependencies = [
 [[package]]
 name = "vulkano-macros"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#44732afefe694c12c3871e5a4e202b4bd984fb30"
+source = "git+https://github.com/vulkano-rs/vulkano.git#9d988440df731e439ebf4d9b4071a864ece5b95b"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1155,9 +1195,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "vulkano-shaders"
+version = "0.33.0"
+source = "git+https://github.com/vulkano-rs/vulkano.git#9d988440df731e439ebf4d9b4071a864ece5b95b"
+dependencies = [
+ "ahash",
+ "heck",
+ "proc-macro2",
+ "quote",
+ "shaderc",
+ "syn 2.0.32",
+ "vulkano",
+]
+
+[[package]]
 name = "vulkano-util"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#44732afefe694c12c3871e5a4e202b4bd984fb30"
+source = "git+https://github.com/vulkano-rs/vulkano.git#9d988440df731e439ebf4d9b4071a864ece5b95b"
 dependencies = [
  "ahash",
  "vulkano",
@@ -1168,7 +1222,7 @@ dependencies = [
 [[package]]
 name = "vulkano-win"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#44732afefe694c12c3871e5a4e202b4bd984fb30"
+source = "git+https://github.com/vulkano-rs/vulkano.git#9d988440df731e439ebf4d9b4071a864ece5b95b"
 dependencies = [
  "core-graphics-types",
  "objc",
@@ -1553,3 +1607,9 @@ name = "xml-rs"
 version = "0.8.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bab77e97b50aee93da431f2cee7cd0f43b4d1da3c408042f2d7d164187774f0a"
+
+[[package]]
+name = "xmlparser"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"

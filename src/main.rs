@@ -1,24 +1,14 @@
 use crate::io::model::from_trmdl;
-use crate::rendering::graph::SceneGraph;
-use crate::rendering::pipeline::{PipelineCreationInfo, VertexAttributeInfo};
-use std::fmt::Debug;
+use crate::rendering::graph::{Camera, SceneGraph};
 use std::fs;
-use std::fs::File;
-use std::io::Read;
-use std::ops::Add;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
-use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3};
+use ultraviolet::{Rotor3, Similarity3, Vec3};
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, PrimaryCommandBufferAbstract,
 };
-use vulkano::descriptor_set::layout::DescriptorBindingFlags;
-use vulkano::format::Format;
 use vulkano::image::sampler::{Filter, Sampler, SamplerAddressMode, SamplerCreateInfo};
-use vulkano::pipeline::layout::PipelineDescriptorSetLayoutCreateInfo;
-use vulkano::pipeline::{PipelineLayout, PipelineShaderStageCreateInfo};
-use vulkano::shader::{EntryPoint, ShaderModule, ShaderModuleCreateInfo};
 use vulkano::swapchain::SwapchainCreateInfo;
 use vulkano::sync::GpuFuture;
 use winit::event::ElementState::{Pressed, Released};
@@ -27,6 +17,7 @@ use winit::event_loop::ControlFlow;
 use winit::{event_loop::EventLoop, window::WindowBuilder};
 
 use crate::rendering::renderer::{Renderer, WindowFrameBuffer};
+use crate::rendering::shaders::load_shaders;
 use crate::rendering::texture_manager::PngTextureUploader;
 
 mod io;
@@ -45,44 +36,7 @@ fn main() {
     let info = Renderer::new(window.clone(), &event_loop);
     let mut renderer = info.0;
 
-    // Load shaders
-    let standard_stages = [
-        PipelineShaderStageCreateInfo::new(read_entrypoint("standard.vs", &renderer)),
-        PipelineShaderStageCreateInfo::new(read_entrypoint("standard.fs", &renderer)),
-    ];
-
-    let mut layout_create_info =
-        PipelineDescriptorSetLayoutCreateInfo::from_stages(&standard_stages);
-
-    let binding = layout_create_info.set_layouts[0]
-        .bindings
-        .get_mut(&0)
-        .unwrap();
-    binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
-    binding.descriptor_count = 1;
-
-    // This layout is shared with every shader so it doesn't matter what shader gets this
-    let layout = PipelineLayout::new(
-        renderer.device.clone(),
-        layout_create_info
-            .into_pipeline_layout_create_info(renderer.device.clone())
-            .unwrap(),
-    )
-    .unwrap();
-
-    let _standard = PipelineCreationInfo {
-        attributes: vec![
-            VertexAttributeInfo {
-                binding: 0,
-                format: Format::R32G32B32_SFLOAT,
-            }, // Pos
-            VertexAttributeInfo {
-                binding: 1,
-                format: Format::R32G32_SFLOAT,
-            }, // TexCoords
-        ],
-    }
-    .create(&renderer, standard_stages, layout.clone());
+    let shaders = load_shaders(&renderer);
 
     // Graph setup
     let fbo = Rc::new(RwLock::new(WindowFrameBuffer::new(
@@ -90,21 +44,8 @@ fn main() {
         renderer.allocator.clone(),
         info.1.as_slice(),
     )));
-    let graph = SceneGraph::new(fbo.clone(), layout, &renderer);
+    let graph = SceneGraph::new(fbo.clone(), shaders, &renderer);
     let mut graph_lock = graph.lock().unwrap();
-
-    graph_lock.add_shader("Standard", _standard.clone(), renderer.allocator.clone());
-    graph_lock.add_shader("SSS", _standard.clone(), renderer.allocator.clone());
-    graph_lock.add_shader(
-        "EyeClearCoat",
-        _standard.clone(),
-        renderer.allocator.clone(),
-    );
-    graph_lock.add_shader(
-        "FresnelBlend",
-        _standard.clone(),
-        renderer.allocator.clone(),
-    );
 
     // Load model into graph
     let _lod_mesh = from_trmdl(
@@ -131,7 +72,7 @@ fn main() {
     graph_lock
         .texture_manager
         .queue(Box::new(PngTextureUploader::new(
-            fs::read(PathBuf::from("pikachu/fallback.png")).unwrap(),
+            fs::read(PathBuf::from("pikachu/pm0025_00_00_body_a_alb.png")).unwrap(),
         )));
     graph_lock
         .texture_manager
@@ -258,57 +199,4 @@ fn main() {
         }
         _ => (),
     });
-}
-
-fn read_entrypoint(shader_name: &str, renderer: &Renderer) -> EntryPoint {
-    let code = read_spirv_words_from_file(format!("shaders/{}.spv", shader_name));
-    let module = unsafe {
-        ShaderModule::new(renderer.device.clone(), ShaderModuleCreateInfo::new(&code)).unwrap()
-    };
-    module.entry_point("main").unwrap()
-}
-
-fn read_spirv_words_from_file(path: impl AsRef<Path>) -> Vec<u32> {
-    let path = path.as_ref();
-    let mut bytes = Vec::new();
-    let mut file = File::open(path)
-        .unwrap_or_else(|err| panic!("can't open file `{}`: {}.", path.display(), err));
-
-    file.read_to_end(&mut bytes).unwrap();
-    vulkano::shader::spirv::bytes_to_words(&bytes)
-        .unwrap_or_else(|err| panic!("file `{}`: {}", path.display(), err))
-        .into_owned()
-}
-
-#[derive(Clone, Debug)]
-struct Camera {
-    translation: Vec3,
-    rotation: Rotor3,
-    cached_transform: Mat4,
-}
-
-impl Camera {
-    pub fn new() -> Camera {
-        Camera {
-            translation: Vec3::new(0.0, 0.0, 0.0),
-            rotation: Rotor3::from_euler_angles(0.0, 0.0, 0.0),
-            cached_transform: Mat4::identity(),
-        }
-    }
-
-    pub fn update(&mut self) {
-        let mut transform = Similarity3::identity();
-        transform.append_translation(self.translation);
-        transform.append_rotation(self.rotation);
-        self.cached_transform = transform.into_homogeneous_matrix();
-    }
-
-    pub fn translate(&mut self, x: f32, y: f32, z: f32) {
-        self.translation = self.translation.add(Vec3::new(x, y, z));
-        self.update();
-    }
-
-    pub fn get_matrix(&self) -> Mat4 {
-        self.cached_transform.clone()
-    }
 }

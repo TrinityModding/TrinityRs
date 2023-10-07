@@ -105,7 +105,10 @@ impl PipelineCreationInfo {
                     RasterizationState::default().front_face(FrontFace::Clockwise),
                 ),
                 depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
-                multisample_state: Some(MultisampleState::default()),
+                multisample_state: Some(MultisampleState {
+                    alpha_to_coverage_enable: true,
+                    ..Default::default()
+                }),
                 color_blend_state: Some(ColorBlendState::new(
                     subpass.color_attachment_formats.len() as u32,
                 )),

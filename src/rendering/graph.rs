@@ -5,9 +5,10 @@ use crate::rendering::texture_manager::TextureManager;
 use crate::WindowFrameBuffer;
 use std::collections::HashMap;
 use std::mem::size_of;
+use std::ops::Add;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
-use ultraviolet::{Mat4, Vec4};
+use ultraviolet::{Mat4, Rotor3, Similarity3, Vec3, Vec4};
 use vulkano::buffer::{Buffer, BufferContents, BufferCreateInfo, BufferUsage, Subbuffer};
 use vulkano::command_buffer::allocator::StandardCommandBufferAllocator;
 use vulkano::command_buffer::{
@@ -27,6 +28,7 @@ use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint, PipelineLayout};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::swapchain::Swapchain;
 use vulkano::DeviceSize;
+use crate::rendering::shaders::ShaderCollection;
 
 const POS_ATTRIB_VERTEX_BUFFER_INITIAL_SIZE: u64 = 6_000000;
 const COLOR_ATTRIBS_VERTEX_BUFFER_INITIAL_SIZE: u64 = 14_000000;
@@ -39,9 +41,42 @@ pub struct PushConstants {
     pub instance_address: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct Camera {
+    translation: Vec3,
+    rotation: Rotor3,
+    cached_transform: Mat4,
+}
+
+impl Camera {
+    pub fn new() -> Camera {
+        Camera {
+            translation: Vec3::new(0.0, 0.0, 0.0),
+            rotation: Rotor3::from_euler_angles(0.0, 0.0, 0.0),
+            cached_transform: Mat4::identity(),
+        }
+    }
+
+    pub fn update(&mut self) {
+        let mut transform = Similarity3::identity();
+        transform.append_translation(self.translation);
+        transform.append_rotation(self.rotation);
+        self.cached_transform = transform.into_homogeneous_matrix();
+    }
+
+    pub fn translate(&mut self, x: f32, y: f32, z: f32) {
+        self.translation = self.translation.add(Vec3::new(x, y, z));
+        self.update();
+    }
+
+    pub fn get_matrix(&self) -> Mat4 {
+        self.cached_transform.clone()
+    }
+}
+
 pub struct SceneGraph {
     pub descriptor_set: Option<Arc<PersistentDescriptorSet>>,
-    pub pipeline_layout: Arc<PipelineLayout>,
+    pub layout: Arc<PipelineLayout>,
     pub fbo: Rc<RwLock<WindowFrameBuffer>>,
     pub allocator: Arc<StandardMemoryAllocator>,
     pub texture_manager: TextureManager,
@@ -93,7 +128,7 @@ impl Recorder for SceneGraph {
         builder
             .bind_descriptor_sets(
                 PipelineBindPoint::Graphics,
-                self.pipeline_layout.clone(),
+                self.layout.clone(),
                 0,
                 self.get_texture_descriptor(),
             )
@@ -116,13 +151,13 @@ impl Recorder for SceneGraph {
                 )
                 .unwrap()
                 .bind_index_buffer(idx_buffer.clone())
+                // .bind_descriptor_sets(PipelineBindPoint::Graphics, self.layout.clone(), 0, self.set.clone()).unwrap()
                 .unwrap();
-            // .bind_descriptor_sets(PipelineBindPoint::Graphics, self.pipeline_layout.clone(), 0, self.set.clone()).unwrap();
 
             for instance in &buffer_guard.instances {
                 builder
                     .push_constants(
-                        self.pipeline_layout.clone(),
+                        self.layout.clone(),
                         0,
                         PushConstants {
                             instance_address: 0,
@@ -132,9 +167,9 @@ impl Recorder for SceneGraph {
 
                 builder
                     .draw_indexed(
-                        instance.0.idx_count as u32,
+                        instance.0.idx_count,
                         1,
-                        instance.0.idx_offset as u32,
+                        instance.0.idx_offset,
                         instance.0.vertex_offset,
                         0,
                     )
@@ -149,22 +184,35 @@ impl Recorder for SceneGraph {
 impl SceneGraph {
     pub fn new(
         window_framebuffer: Rc<RwLock<WindowFrameBuffer>>,
-        layout: Arc<PipelineLayout>,
+        shaders: ShaderCollection,
         renderer: &Renderer,
     ) -> Arc<Mutex<SceneGraph>> {
-        Arc::new(Mutex::new(SceneGraph {
+        let scene_graph = Arc::new(Mutex::new(SceneGraph {
             descriptor_set: None,
-            pipeline_layout: layout.clone(),
+            layout: shaders.layout.clone(),
             fbo: window_framebuffer,
             allocator: renderer.allocator.clone(),
             shader_map: HashMap::new(),
             texture_manager: TextureManager::new(
-                layout,
+                shaders.layout.clone(),
                 renderer.descriptor_set_allocator.clone(),
                 renderer.device.clone(),
             ),
             buffers: HashMap::new(),
-        }))
+        }));
+
+        let mut scene_guard = scene_graph.lock().unwrap();
+        for shader in shaders.shaders {
+            scene_guard.shader_map
+                .entry(shader.0.to_string())
+                .or_insert(shader.1.clone());
+            scene_guard.buffers
+                .entry(shader.1)
+                .or_insert(RwLock::new(BufferStorage::new(renderer.allocator.clone())));
+        }
+
+        drop(scene_guard);
+        scene_graph
     }
 
     fn perspective(vertical_fov: f32, aspect_ratio: f32, z_near: f32, z_far: f32) -> Mat4 {
@@ -181,20 +229,6 @@ impl SceneGraph {
         )
     }
 
-    pub fn add_shader(
-        &mut self,
-        name: &str,
-        pipeline: Arc<GraphicsPipeline>,
-        allocator: Arc<StandardMemoryAllocator>,
-    ) {
-        self.shader_map
-            .entry(name.to_string())
-            .or_insert(pipeline.clone());
-        self.buffers
-            .entry(pipeline)
-            .or_insert(RwLock::new(BufferStorage::new(allocator)));
-    }
-
     pub fn add_model(&mut self, meshes: Vec<Arc<MeshLocation>>) {
         for x in meshes {
             let buffer = self.buffers.get(&x.shader).unwrap();
@@ -204,8 +238,8 @@ impl SceneGraph {
     }
 
     fn new_transfer_buffer<T>(&self, size: DeviceSize) -> Subbuffer<[T]>
-    where
-        T: BufferContents,
+        where
+            T: BufferContents,
     {
         Buffer::new_slice(
             self.allocator.clone(),
@@ -220,7 +254,7 @@ impl SceneGraph {
             },
             size,
         )
-        .unwrap()
+            .unwrap()
     }
 
     pub fn write_mesh_to_renderer(
@@ -232,7 +266,7 @@ impl SceneGraph {
 
         for entry in shader_to_mesh_map {
             let shader_name = entry.0;
-            let mesh_info = entry.1 .0;
+            let mesh_info = entry.1.0;
 
             let shader = self
                 .shader_map
@@ -252,7 +286,6 @@ impl SceneGraph {
                             pub position: [f32; 3],
                         }
 
-                        let pos_buffer_element_size = size_of::<PosElement>();
                         let transfer_buffer: Subbuffer<[PosElement]> =
                             self.new_transfer_buffer(element_count as DeviceSize);
                         let mut write_guard = transfer_buffer.write().unwrap();
@@ -264,7 +297,7 @@ impl SceneGraph {
 
                         drop(write_guard);
                         buffers.pos_vertex_buffer.transfer(
-                            (pos_buffer_element_size * element_count) as DeviceSize,
+                            (size_of::<PosElement>() * element_count) as DeviceSize,
                             transfer_buffer.clone().reinterpret(),
                             renderer,
                         );
@@ -277,7 +310,6 @@ impl SceneGraph {
                             pub uv: [f32; 2],
                         }
 
-                        let col_buffer_element_size = size_of::<ColElement>();
                         let transfer_buffer: Subbuffer<[ColElement]> =
                             self.new_transfer_buffer(element_count as DeviceSize);
                         let mut write_guard = transfer_buffer.write().unwrap();
@@ -286,8 +318,8 @@ impl SceneGraph {
                         }
 
                         drop(write_guard);
-                        buffers.pos_vertex_buffer.transfer(
-                            (col_buffer_element_size * element_count) as DeviceSize,
+                        buffers.color_vertex_buffer.transfer(
+                            (size_of::<ColElement>() * element_count) as DeviceSize,
                             transfer_buffer.clone().reinterpret(),
                             renderer,
                         );
@@ -312,11 +344,11 @@ impl SceneGraph {
                 renderer,
             );
 
-            for sub_mesh in entry.1 .1 {
+            for sub_mesh in entry.1.1 {
                 written_models.push(Arc::new(MeshLocation {
                     shader: shader.clone(),
-                    idx_offset: sub_mesh.poly_offset() as u64,
-                    idx_count: sub_mesh.poly_count() as u64,
+                    idx_offset: sub_mesh.poly_offset(),
+                    idx_count: sub_mesh.poly_count(),
                     vertex_offset: buffers.vertex_offset,
                 }));
             }
@@ -361,7 +393,7 @@ impl ManagedBuffer {
             },
             DeviceLayout::from_size_alignment(size, DeviceAlignment::MIN.as_devicesize()).unwrap(),
         )
-        .unwrap();
+            .unwrap();
 
         ManagedBuffer {
             buffer,
@@ -395,7 +427,7 @@ impl ManagedBuffer {
             renderer.graphics_queue.queue_family_index(),
             CommandBufferUsage::OneTimeSubmit,
         )
-        .unwrap();
+            .unwrap();
 
         builder.copy_buffer(copy_info).unwrap();
         let cmd_buffer = builder.build().unwrap();
@@ -449,8 +481,8 @@ impl BufferStorage {
 
 pub struct MeshLocation {
     pub shader: Arc<GraphicsPipeline>,
-    pub idx_offset: u64,
-    pub idx_count: u64,
+    pub idx_offset: u32,
+    pub idx_count: u32,
     ///a constant value that should be added to each index in the index buffer to produce the final vertex number to be used.
     pub vertex_offset: i32,
 }
