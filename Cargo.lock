@@ -1157,7 +1157,7 @@ dependencies = [
 [[package]]
 name = "vulkano"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#1e7b781bad3ccd593d269533319eff02ab6d33dd"
+source = "git+https://github.com/Rua/vulkano.git?branch=runtime-pointer#0127e713654b44390c1b1c6017a5cd139a7221b1"
 dependencies = [
  "ahash",
  "ash",
@@ -1186,7 +1186,7 @@ dependencies = [
 [[package]]
 name = "vulkano-macros"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#1e7b781bad3ccd593d269533319eff02ab6d33dd"
+source = "git+https://github.com/Rua/vulkano.git?branch=runtime-pointer#0127e713654b44390c1b1c6017a5cd139a7221b1"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -1197,7 +1197,7 @@ dependencies = [
 [[package]]
 name = "vulkano-shaders"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#1e7b781bad3ccd593d269533319eff02ab6d33dd"
+source = "git+https://github.com/Rua/vulkano.git?branch=runtime-pointer#0127e713654b44390c1b1c6017a5cd139a7221b1"
 dependencies = [
  "ahash",
  "heck",
@@ -1211,7 +1211,7 @@ dependencies = [
 [[package]]
 name = "vulkano-util"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#1e7b781bad3ccd593d269533319eff02ab6d33dd"
+source = "git+https://github.com/Rua/vulkano.git?branch=runtime-pointer#0127e713654b44390c1b1c6017a5cd139a7221b1"
 dependencies = [
  "ahash",
  "vulkano",
@@ -1222,7 +1222,7 @@ dependencies = [
 [[package]]
 name = "vulkano-win"
 version = "0.33.0"
-source = "git+https://github.com/vulkano-rs/vulkano.git#1e7b781bad3ccd593d269533319eff02ab6d33dd"
+source = "git+https://github.com/Rua/vulkano.git?branch=runtime-pointer#0127e713654b44390c1b1c6017a5cd139a7221b1"
 dependencies = [
  "core-graphics-types",
  "objc",

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
 use vulkano::format::Format;
-use vulkano::pipeline::graphics::color_blend::{ColorBlendAttachmentState, ColorBlendState};
+use vulkano::pipeline::graphics::color_blend::ColorBlendState;
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::multisample::MultisampleState;
@@ -16,7 +16,7 @@ use vulkano::pipeline::graphics::vertex_input::{
 };
 use vulkano::pipeline::graphics::viewport::ViewportState;
 use vulkano::pipeline::graphics::GraphicsPipelineCreateInfo;
-use vulkano::pipeline::{GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
+use vulkano::pipeline::{DynamicState, GraphicsPipeline, PipelineLayout, PipelineShaderStageCreateInfo};
 
 pub struct VertexAttributeInfo {
     pub binding: u32,
@@ -101,19 +101,18 @@ impl PipelineCreationInfo {
                 vertex_input_state: Some(vertex_attribs),
                 input_assembly_state: Some(InputAssemblyState::default()),
                 viewport_state: Some(ViewportState::default()),
-                rasterization_state: Some(RasterizationState {
-                    front_face: FrontFace::Clockwise,
-                    ..Default::default()
-                }),
+                rasterization_state: Some(
+                    RasterizationState::default().front_face(FrontFace::Clockwise),
+                ),
                 depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
                 multisample_state: Some(MultisampleState {
                     alpha_to_coverage_enable: true,
                     ..Default::default()
                 }),
-                color_blend_state: Some(ColorBlendState::with_attachment_states(
+                color_blend_state: Some(ColorBlendState::new(
                     subpass.color_attachment_formats.len() as u32,
-                    ColorBlendAttachmentState::default(),
                 )),
+                dynamic_state: [DynamicState::Viewport].into_iter().collect(),
                 subpass: Some(subpass.into()),
                 ..GraphicsPipelineCreateInfo::layout(layout)
             },

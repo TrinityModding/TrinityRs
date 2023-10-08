@@ -64,7 +64,7 @@ impl Camera {
     }
 
     pub fn get_matrix(&self) -> Mat4 {
-        self.cached_transform.clone()
+        self.cached_transform
     }
 }
 
@@ -76,6 +76,7 @@ pub struct SceneGraph {
     pub texture_manager: TextureManager,
     pub buffers: HashMap<Arc<GraphicsPipeline>, RwLock<BufferStorage>>,
     pub shader_map: HashMap<String, Arc<GraphicsPipeline>>,
+    pub camera: Camera
 }
 
 impl Recorder for SceneGraph {
@@ -145,7 +146,8 @@ impl Recorder for SceneGraph {
                 )
                 .unwrap()
                 .bind_index_buffer(idx_buffer.clone())
-                // .bind_descriptor_sets(PipelineBindPoint::Graphics, self.layout.clone(), 0, self.set.clone()).unwrap()
+                .unwrap()
+                .bind_descriptor_sets(PipelineBindPoint::Graphics, self.layout.clone(), 0, self.descriptor_set.clone().expect("No Descriptor Set setup"))
                 .unwrap();
 
             for instance in &buffer_guard.instances {
@@ -155,7 +157,7 @@ impl Recorder for SceneGraph {
                         0,
                         PushConstantData {
                             projMat: proj_matrix.into(),
-                            viewMat: Mat4::identity().into(),
+                            viewMat: self.camera.get_matrix().into(),
                             instanceAddress: 0,
                         },
                     )
@@ -182,6 +184,7 @@ impl SceneGraph {
         window_framebuffer: Rc<RwLock<WindowFrameBuffer>>,
         shaders: ShaderCollection,
         renderer: &Renderer,
+        camera: Camera
     ) -> Arc<Mutex<SceneGraph>> {
         let scene_graph = Arc::new(Mutex::new(SceneGraph {
             descriptor_set: None,
@@ -195,6 +198,7 @@ impl SceneGraph {
                 renderer.device.clone(),
             ),
             buffers: HashMap::new(),
+            camera,
         }));
 
         let mut scene_guard = scene_graph.lock().unwrap();

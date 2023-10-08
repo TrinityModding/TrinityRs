@@ -44,7 +44,7 @@ fn main() {
         renderer.allocator.clone(),
         info.1.as_slice(),
     )));
-    let graph = SceneGraph::new(fbo.clone(), shaders, &renderer);
+    let graph = SceneGraph::new(fbo.clone(), shaders, &renderer, Camera::new());
     let mut graph_lock = graph.lock().unwrap();
 
     // Load model into graph

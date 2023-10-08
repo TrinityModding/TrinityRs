@@ -21,7 +21,7 @@ layout(push_constant) uniform PushConstantData {
 void main() {
     mat4 worldSpace = constants.projMat * constants.viewMat;
     Instance instance = constants.instanceAddress;
-    gl_Position = worldSpace * instance.transform * vec4(position, 1.0);
+    gl_Position = worldSpace * vec4(position, 1.0);
     gl_Position = vec4(position, 1.0);
     outUv = uv;
     outTexture = 0;
