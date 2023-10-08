@@ -4,11 +4,11 @@ use std::collections::HashMap;
 use std::mem::size_of;
 use std::sync::Arc;
 use vulkano::format::Format;
-use vulkano::pipeline::graphics::color_blend::ColorBlendState;
-use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
+use vulkano::pipeline::graphics::color_blend::{ColorBlendAttachmentState, ColorBlendState};
+use vulkano::pipeline::graphics::depth_stencil::{DepthState, DepthStencilState};
 use vulkano::pipeline::graphics::input_assembly::InputAssemblyState;
 use vulkano::pipeline::graphics::multisample::MultisampleState;
-use vulkano::pipeline::graphics::rasterization::{FrontFace, RasterizationState};
+use vulkano::pipeline::graphics::rasterization::RasterizationState;
 use vulkano::pipeline::graphics::subpass::PipelineRenderingCreateInfo;
 use vulkano::pipeline::graphics::vertex_input::{
     VertexInputAttributeDescription, VertexInputBindingDescription, VertexInputRate,
@@ -101,22 +101,24 @@ impl PipelineCreationInfo {
                 vertex_input_state: Some(vertex_attribs),
                 input_assembly_state: Some(InputAssemblyState::default()),
                 viewport_state: Some(ViewportState::default()),
-                rasterization_state: Some(
-                    RasterizationState::default().front_face(FrontFace::Clockwise),
-                ),
-                depth_stencil_state: Some(DepthStencilState::simple_depth_test()),
+                rasterization_state: Some(RasterizationState::default()),
+                depth_stencil_state: Some(DepthStencilState {
+                    depth: Some(DepthState::simple()),
+                    ..Default::default()
+                }),
                 multisample_state: Some(MultisampleState {
                     alpha_to_coverage_enable: true,
                     ..Default::default()
                 }),
-                color_blend_state: Some(ColorBlendState::new(
+                color_blend_state: Some(ColorBlendState::with_attachment_states(
                     subpass.color_attachment_formats.len() as u32,
+                    ColorBlendAttachmentState::default(),
                 )),
                 dynamic_state: [DynamicState::Viewport].into_iter().collect(),
                 subpass: Some(subpass.into()),
                 ..GraphicsPipelineCreateInfo::layout(layout)
             },
         )
-        .unwrap()
+            .unwrap()
     }
 }
