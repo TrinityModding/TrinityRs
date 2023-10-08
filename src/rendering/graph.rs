@@ -28,18 +28,12 @@ use vulkano::pipeline::{GraphicsPipeline, PipelineBindPoint, PipelineLayout};
 use vulkano::render_pass::{AttachmentLoadOp, AttachmentStoreOp};
 use vulkano::swapchain::Swapchain;
 use vulkano::DeviceSize;
-use crate::rendering::shaders::ShaderCollection;
+use crate::rendering::shaders::{PushConstantData, ShaderCollection};
 
 const POS_ATTRIB_VERTEX_BUFFER_INITIAL_SIZE: u64 = 6_000000;
 const COLOR_ATTRIBS_VERTEX_BUFFER_INITIAL_SIZE: u64 = 14_000000;
 const INDEX_BUFFER_INITIAL_SIZE: u64 = 6_000000;
 const INSTANCE_INFO_BUFFER_INITIAL_SIZE: u64 = 32_000000;
-
-#[derive(BufferContents)]
-#[repr(C)]
-pub struct PushConstants {
-    pub instance_address: u64,
-}
 
 #[derive(Clone, Debug)]
 pub struct Camera {
@@ -159,8 +153,10 @@ impl Recorder for SceneGraph {
                     .push_constants(
                         self.layout.clone(),
                         0,
-                        PushConstants {
-                            instance_address: 0,
+                        PushConstantData {
+                            projMat: proj_matrix.into(),
+                            viewMat: Mat4::identity().into(),
+                            instanceAddress: 0,
                         },
                     )
                     .unwrap();
