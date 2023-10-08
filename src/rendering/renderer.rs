@@ -99,7 +99,7 @@ impl Renderer {
                     .map(|i| (p, i as u32))
             })
             .min_by_key(|(p, _)| match p.properties().device_type {
-                PhysicalDeviceType::DiscreteGpu => 5,
+                PhysicalDeviceType::DiscreteGpu => 0,
                 PhysicalDeviceType::IntegratedGpu => 1, // TODO: remember to undo this! Testing done on I-GPU to make sure it can run well
                 PhysicalDeviceType::VirtualGpu => 2,
                 PhysicalDeviceType::Cpu => 3,
@@ -109,7 +109,7 @@ impl Renderer {
             .expect("no suitable physical device found");
 
         println!("max_descriptor_set_samplers {}", physical_device.properties().max_descriptor_set_samplers);
-        println!("max_per_stage_descriptor_sampled_images {}", physical_device.properties().max_per_stage_descriptor_sampled_images);
+        println!("max_per_stage_resources {}", physical_device.properties().max_per_stage_resources);
 
         println!(
             "Using device: {} (type: {:?})",

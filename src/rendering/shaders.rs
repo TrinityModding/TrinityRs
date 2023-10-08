@@ -42,7 +42,7 @@ pub fn load_shaders(renderer: &Renderer) -> ShaderCollection {
         .get_mut(&1)
         .unwrap();
     texture_binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
-    texture_binding.descriptor_count = renderer.device.physical_device().properties().max_per_stage_descriptor_sampled_images;
+    texture_binding.descriptor_count = renderer.device.physical_device().properties().max_per_stage_resources - 10; // Take 10 off just to be safe
 
     let layout = PipelineLayout::new(
         device.clone(),
@@ -67,6 +67,7 @@ pub fn load_shaders(renderer: &Renderer) -> ShaderCollection {
     let mut shaders = HashMap::new();
     shaders.insert("Standard", standard_pipeline.clone());
     shaders.insert("SSS", standard_pipeline.clone()); // TODO: implement this shader properly
+    shaders.insert("Unlit", standard_pipeline.clone()); // TODO: implement this shader properly
     shaders.insert("EyeClearCoat", standard_pipeline.clone()); // TODO: implement this shader properly
     shaders.insert("FresnelBlend", standard_pipeline.clone()); // TODO: implement this shader properly
 

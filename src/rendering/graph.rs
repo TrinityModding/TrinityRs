@@ -277,7 +277,7 @@ impl SceneGraph {
 
             // Upload Vertex Data
             match shader_name.as_str() {
-                "Standard" | "FresnelBlend" | "EyeClearCoat" | "SSS" => {
+                "Standard" | "FresnelBlend" | "EyeClearCoat" | "SSS" | "Unlit" => {
                     let element_count = mesh_info.positions.len();
                     {
                         #[derive(BufferContents)]

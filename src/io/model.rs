@@ -50,7 +50,7 @@ pub fn from_trmdl(
     path.pop();
 
     let trmtr_path = trmdl.materials().unwrap().get(0);
-    let trmtr_bytes = fs::read(path.join(trmtr_path).to_str().unwrap()).unwrap();
+    let trmtr_bytes = fs::read(path.join(trmtr_path)).unwrap();
     let material = unsafe { root_as_trmtr_unchecked(trmtr_bytes.as_slice()) };
 
     let mut material_to_shader = HashMap::new();
@@ -61,14 +61,13 @@ pub fn from_trmdl(
             .or_insert(material.shaders().unwrap().get(0).shader_name().unwrap());
 
         let clean_texture_name = material.textures().unwrap().get(0).texture_file().unwrap().replace(".bntx", ".png");
-        let full_texture_path = PathBuf::from(format!("{}{}", "pikachu/", clean_texture_name));
 
         material_to_id
             .entry(material.name().unwrap())
             .or_insert(render_graph
                 .texture_manager
                 .queue(Box::new(PngTextureUploader::new(
-                    fs::read(full_texture_path).unwrap(),
+                    fs::read(path.join(clean_texture_name)).unwrap(),
                 ))));
     }
 
