@@ -59,7 +59,7 @@ pub fn load_shaders(renderer: &Renderer) -> ShaderCollection {
                 format: Format::R32G32_SFLOAT,
             }, // TexCoords
         ],
-    }.create(&renderer, standard_stages, layout.clone());
+    }.create(renderer, standard_stages, layout.clone());
 
     let mut shaders = HashMap::new();
     shaders.insert("Standard", standard_pipeline.clone());
