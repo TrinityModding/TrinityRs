@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ultraviolet::{Vec2, Vec3, Vec4};
 use vulkano::half::f16;
+use crate::rendering::texture_manager::PngTextureUploader;
 
 pub const RGBA8_UNORM: AttributeFormat = AttributeFormat::Rgba8UNorm(20, size_of::<u8>() * 4);
 pub const RGBA8_UNSIGNED: AttributeFormat = AttributeFormat::Rgba8Unsigned(22, size_of::<u8>() * 4);
@@ -52,11 +53,23 @@ pub fn from_trmdl(
     let trmtr_bytes = fs::read(path.join(trmtr_path).to_str().unwrap()).unwrap();
     let material = unsafe { root_as_trmtr_unchecked(trmtr_bytes.as_slice()) };
 
-    let mut material_to_shader_map = HashMap::new();
+    let mut material_to_shader = HashMap::new();
+    let mut material_to_id = HashMap::new();
     for material in &material.materials().unwrap() {
-        material_to_shader_map
+        material_to_shader
             .entry(material.name().unwrap())
             .or_insert(material.shaders().unwrap().get(0).shader_name().unwrap());
+
+        let clean_texture_name = material.textures().unwrap().get(0).texture_file().unwrap().replace(".bntx", ".png");
+        let full_texture_path = PathBuf::from(format!("{}{}", "pikachu/", clean_texture_name));
+
+        material_to_id
+            .entry(material.name().unwrap())
+            .or_insert(render_graph
+                .texture_manager
+                .queue(Box::new(PngTextureUploader::new(
+                    fs::read(full_texture_path).unwrap(),
+                ))));
     }
 
     let lod_info = trmdl.lods().unwrap().get(0);
@@ -67,7 +80,7 @@ pub fn from_trmdl(
             .unwrap()
             .iter()
             .map(|x| trmdl.meshes().unwrap().get(x.unk0() as usize))
-            .map(|x1| read_mesh(x1, &path, &material_to_shader_map, render_graph, renderer))
+            .map(|x1| read_mesh(x1, &path, &material_to_shader, render_graph, renderer))
             .collect(),
     }
 }

@@ -103,18 +103,15 @@ impl TextureManager {
     }
 
     pub fn generate_descriptor_set(&self) -> Arc<PersistentDescriptorSet> {
-        let textures: Vec<(Arc<ImageView>, Arc<Sampler>)> = self
-            .textures
-            .iter()
-            .map(|item| (Arc::clone(item), self.sampler.clone()))
-            .collect();
-
         let d_layout = self.layout.set_layouts().get(0).unwrap();
         PersistentDescriptorSet::new_variable(
             &self.allocator,
             d_layout.clone(),
             self.textures.len() as u32,
-            [WriteDescriptorSet::image_view_sampler_array(0, 0, textures)],
+            [
+                WriteDescriptorSet::sampler(0, self.sampler.clone()),
+                WriteDescriptorSet::image_view_array(1, 0, self.textures.clone()),
+            ],
             [],
         )
         .unwrap()

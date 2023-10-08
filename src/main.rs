@@ -1,7 +1,5 @@
 use crate::io::model::from_trmdl;
 use crate::rendering::graph::{Camera, SceneGraph};
-use std::fs;
-use std::path::{PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, RwLock};
 use ultraviolet::{Rotor3, Similarity3, Vec3};
@@ -18,7 +16,6 @@ use winit::{event_loop::EventLoop, window::WindowBuilder};
 
 use crate::rendering::renderer::{Renderer, WindowFrameBuffer};
 use crate::rendering::shaders::load_shaders;
-use crate::rendering::texture_manager::PngTextureUploader;
 
 mod io;
 mod rendering;
@@ -68,12 +65,7 @@ fn main() {
         CommandBufferUsage::OneTimeSubmit,
     )
     .unwrap();
-
-    graph_lock
-        .texture_manager
-        .queue(Box::new(PngTextureUploader::new(
-            fs::read(PathBuf::from("pikachu/pm0025_00_00_body_a_alb.png")).unwrap(),
-        )));
+    
     graph_lock
         .texture_manager
         .upload_all(&renderer, &mut uploads);

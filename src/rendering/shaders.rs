@@ -35,12 +35,15 @@ pub fn load_shaders(renderer: &Renderer) -> ShaderCollection {
 
     let mut descriptor_layout_creation_info =
         PipelineDescriptorSetLayoutCreateInfo::from_stages(&standard_stages);
-    let binding = descriptor_layout_creation_info.set_layouts[0]
+
+    // Textures
+    let texture_binding = descriptor_layout_creation_info.set_layouts[0]
         .bindings
-        .get_mut(&0)
+        .get_mut(&1)
         .unwrap();
-    binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
-    binding.descriptor_count = 1;
+    texture_binding.binding_flags |= DescriptorBindingFlags::VARIABLE_DESCRIPTOR_COUNT;
+    texture_binding.descriptor_count = renderer.device.physical_device().properties().max_per_stage_descriptor_sampled_images;
+
     let layout = PipelineLayout::new(
         device.clone(),
         descriptor_layout_creation_info
